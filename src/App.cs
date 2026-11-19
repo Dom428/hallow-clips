@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.8.0.0")]
-[assembly: AssemblyFileVersion("1.8.0.0")]
+[assembly: AssemblyVersion("1.9.0.0")]
+[assembly: AssemblyFileVersion("1.9.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.8";
+        public const string Version = "1.9";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -114,7 +114,7 @@ namespace HallowClips
 
         public MainWindow(bool hidden)
         {
-            startHidden = hidden; rec = new Recorder(S);
+            startHidden = hidden; rec = new Recorder(S); ClipOps.ExportChoice = S.ExportSound ?? "all";
             Title = "Hallow Clips"; Width = 820; Height = 900; MinWidth = 700; MinHeight = 560;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -366,7 +366,9 @@ namespace HallowClips
         void Decide()
         {
             bool want = S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null);
-            if (want && !rec.Running) { if (!rec.Start()) Status(rec.Error); }
+            var gp = S.PerAppSound && Current != null ? Current.Pid : 0;
+            if (want && rec.Running && S.PerAppSound && gp != rec.GamePid && ProcessAudio.Supported) rec.Stop();   // v1.9: a game started or ended - restart so it gets its own track
+            if (want && !rec.Running) { rec.GamePid = gp; if (!rec.Start()) Status(rec.Error); }
             else if (!want && rec.Running) rec.Stop();
             UpdateState(); WriteStatus(false);
         }
@@ -473,6 +475,34 @@ namespace HallowClips
                 () => S.SpaceLimitGB.ToString(), v => { S.SpaceLimitGB = int.Parse(v); Dispatcher.BeginInvoke(new Action(EnforceLimit)); }, false);
             ((FrameworkElement)limit).ToolTip = "When the clips folder grows past this, the oldest clips that aren't favourites go to the Recycle Bin.";
             set.Children.Add(limit);
+            // v1.9: separate sound per app, and which tracks go into exports
+            var apps = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var al = new TextBlock { Text = "Own sound tracks", Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold }; DockPanel.SetDock(al, Dock.Left); apps.Children.Add(al);
+            var awp = new WrapPanel();
+            var groups = new[] { Tuple.Create("Game", new string[0]), Tuple.Create("Discord", new[] { "Discord" }), Tuple.Create("Spotify", new[] { "Spotify" }), Tuple.Create("Browser", new[] { "chrome", "msedge", "firefox" }), Tuple.Create("TeamSpeak", new[] { "ts3client_win64", "TeamSpeak" }) };
+            bool supported = ProcessAudio.Supported;
+            foreach (var g in groups)
+            {
+                var grp = g; bool isGame = g.Item2.Length == 0;
+                var on = isGame ? S.PerAppSound && S.GameTrack : S.PerAppSound && g.Item2.Any(x => (S.AppTracks ?? new List<string>()).Contains(x, StringComparer.OrdinalIgnoreCase));
+                var c = new ToggleButton { Content = g.Item1, Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 6, 0), IsChecked = on && supported, Padding = new Thickness(12, 5, 12, 5), IsEnabled = supported };
+                c.Click += (s, e) =>
+                {
+                    if (S.AppTracks == null) S.AppTracks = new List<string>();
+                    if (!S.PerAppSound) { S.GameTrack = false; S.AppTracks.Clear(); }   // off before: start from nothing ticked
+                    if (isGame) S.GameTrack = c.IsChecked == true;
+                    else { S.AppTracks.RemoveAll(x => grp.Item2.Contains(x, StringComparer.OrdinalIgnoreCase)); if (c.IsChecked == true) S.AppTracks.AddRange(grp.Item2); }
+                    S.PerAppSound = S.GameTrack || S.AppTracks.Count > 0;
+                    S.Save(); foreach (ToggleButton x in awp.Children) { var nm = x.Content as string; var gg = groups.First(q => q.Item1 == nm); x.IsChecked = S.PerAppSound && (gg.Item2.Length == 0 ? S.GameTrack : gg.Item2.Any(y => S.AppTracks.Contains(y, StringComparer.OrdinalIgnoreCase))); }
+                    Restart();
+                };
+                awp.Children.Add(c);
+            }
+            apps.Children.Add(awp);
+            apps.ToolTip = supported ? "Each app you pick gets its own sound track next to everything + your mic (the game is the one that's running). An app started after recording began gets its track at the next start." : "Needs Windows 10 version 2004 or newer - your clips keep everything + mic.";
+            set.Children.Add(apps);
+            set.Children.Add(chipRow("Sound in exports", new[] { Tuple.Create("all", "Everything + mic"), Tuple.Create("nomic", "Everything, no mic"), Tuple.Create("game", "Game only"), Tuple.Create("gamemic", "Game + mic") },
+                () => S.ExportSound ?? "all", v => { S.ExportSound = v; ClipOps.ExportChoice = v; }, false));
             Func<string, bool, Action<bool>, CheckBox> sw = (text, on, setv) =>
             {
                 var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
@@ -626,7 +656,7 @@ namespace HallowClips
             if (finishing) return;
             if (session != null) { StopSession(); return; }
             if (S.Ffmpeg == null) { toast.Flash("Hallow Clips isn't set up yet"); return; }
-            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name);
+            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name); r.GamePid = S.PerAppSound && Current != null ? Current.Pid : 0;
             if (!r.Start()) { toast.Flash("Couldn't start recording"); Status(r.Error); return; }
             session = r;
             toast.Flash("Recording the whole session - Ctrl+Alt+R stops");

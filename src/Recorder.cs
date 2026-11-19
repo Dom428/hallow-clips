@@ -32,12 +32,16 @@ namespace HallowClips
         [DataMember] public string Codec = "h264";       // v1.3: h264, hevc, av1
         [DataMember] public int SpaceLimitGB = 0;        // v1.3: 0 = no limit
         [DataMember] public string LastUpdateCheck = "";  // v1.8
+        [DataMember] public bool PerAppSound = true;      // v1.9: the game and AppTracks on their own sound tracks
+        [DataMember] public bool GameTrack = true;        // v1.9: the running game on its own track
+        [DataMember] public List<string> AppTracks = new List<string> { "Discord" };   // v1.9: exe names
+        [DataMember] public string ExportSound = "all";   // v1.9: all (everything + mic), nomic, game, gamemic
         [DataMember] public bool UseHallowAccent = true; // v1.6: the Hallow accent colour from theme.json
         [DataMember] public string LastCrashShown = "";  // v1.6: the crash report already told about
         [DataMember] public bool UseHallowIcon = true;   // v1.5: hide our tray icon while Hallow Hub hosts the family icon
         [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
         [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; CodecsFor = ""; Codecs = new List<string>(); }
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_DATA"); return !string.IsNullOrEmpty(t) ? t : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }   // tests use their own folder
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -67,7 +71,13 @@ namespace HallowClips
     public class Recorder
     {
         readonly ClipSettings S;
-        Process ff; AudioPipe sys, mic; public string Error; public DateTime Started;
+        Process ff; AudioPipe sys, mic; List<AudioPipe> apps = new List<AudioPipe>(); public string Error; public DateTime Started;
+        // v1.9: the running game's process (its own sound track); set before Start
+        public int GamePid;
+        IEnumerable<AudioPipe> Pipes { get { return new[] { sys, mic }.Concat(apps).Where(p => p != null); } }
+        public int AppTracks { get { return apps.Count; } }
+        List<string> trackTitles = new List<string>();
+        static string TitleArgs(List<string> titles) { var sb = new StringBuilder(); for (int k = 0; k < titles.Count; k++) sb.Append("-metadata:s:a:" + k + " title=\"" + titles[k].Replace("\"", "") + "\" "); return sb.ToString(); }
         public string BufferDir { get { return Path.Combine(ClipSettings.Dir, "buffer"); } }
         public bool Running { get { try { return ff != null && !ff.HasExited; } catch { return false; } } }
         public Recorder(ClipSettings s) { S = s; }
@@ -127,6 +137,18 @@ namespace HallowClips
             else Directory.CreateDirectory(Path.GetDirectoryName(SessionFile));
             sys = new AudioPipe(true); if (!sys.Open()) { Error = "Game sound: " + sys.Error; sys = null; }
             mic = null; if (S.Mic) { mic = new AudioPipe(false); if (!mic.Open()) mic = null; }
+            // v1.9: the game and the apps you picked on their own tracks (Windows 10 2004+; otherwise just everything + mic)
+            apps = new List<AudioPipe>();
+            if (S.PerAppSound && ProcessAudio.Supported)
+            {
+                var want = new List<Tuple<int, string>>();
+                if (GamePid > 0 && S.GameTrack) want.Add(Tuple.Create(GamePid, "Game"));
+                foreach (var app in (S.AppTracks ?? new List<string>()).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var pid = RootPid(app); if (pid > 0 && pid != GamePid && !want.Any(w => w.Item1 == pid)) want.Add(Tuple.Create(pid, AppTitle(app)));
+                }
+                foreach (var w in want) { var p = new AudioPipe(w.Item1, w.Item2); if (p.Open()) apps.Add(p); }
+            }
             int seg = 2, wrap = S.Seconds / seg + 6;
             var fam = GpuFamily(exe);
             var q = S.Quality == "max" ? 18 : S.Quality == "medium" ? 28 : 23;
@@ -135,35 +157,35 @@ namespace HallowClips
             a.Append("-hide_banner -loglevel info -nostats -y ");   // info: "Press [q]" tells us when recording really starts
             a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
             int idx = 1; var maps = "-map 0:v ";
-            foreach (var p in new[] { sys, mic })
+            foreach (var p in Pipes)
             {
-                if (p == null) continue;
-                a.AppendFormat(CultureInfo.InvariantCulture, "-f f32le -ar {0} -ac {1} -i \\\\.\\pipe\\{2} ", p.Rate, p.Channels, p.PipeName);
+                a.AppendFormat(CultureInfo.InvariantCulture, "-f {3} -ar {0} -ac {1} -i \\\\.\\pipe\\{2} ", p.Rate, p.Channels, p.PipeName, p.Format);
                 maps += "-map " + idx + ":a "; idx++;
             }
             a.Append(maps);
             a.Append(v + " ");
             a.AppendFormat(CultureInfo.InvariantCulture, "-g {0} -force_key_frames \"expr:gte(t,n_forced*{1})\" ", S.Fps * seg, seg);
             if (idx > 1) a.Append("-c:a aac -b:a 160k -ac 2 -ar 48000 ");
-            if (sys != null && mic != null) a.Append("-metadata:s:a:0 title=\"Game and chat\" -metadata:s:a:1 title=\"Your mic\" ");
+            trackTitles = Pipes.Select(p => p == sys ? "Game and chat" : p == mic ? "Your mic" : p.Title).ToList();
+            a.Append(TitleArgs(trackTitles));   // exports pick tracks by these names
             if (SessionFile != null) a.Append("-f matroska \"" + Path.ChangeExtension(SessionFile, ".mkv") + "\"");
             else a.AppendFormat(CultureInfo.InvariantCulture, "-f segment -segment_time {0} -segment_format {1} -segment_wrap {2} -reset_timestamps 1 \"{3}\"", seg, segExt == "ts" ? "mpegts" : "matroska", wrap, Path.Combine(BufferDir, "seg%03d." + segExt));
             try
             {
                 ff = new Process { StartInfo = new ProcessStartInfo(exe, a.ToString()) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardInput = true } };
-                var s0 = sys; var m0 = mic;
+                var all = Pipes.ToList();
                 ff.ErrorDataReceived += (o, e) =>
                 {
                     if (e.Data == null) return;
-                    if (e.Data.StartsWith("Press [q]")) { if (s0 != null) s0.Live = true; if (m0 != null) m0.Live = true; }
+                    if (e.Data.StartsWith("Press [q]")) foreach (var p in all) p.Live = true;
                     if (e.Data.Contains("Opening '") && e.Data.Contains("for writing")) return;   // a new 2 s piece - not worth keeping
                     lock (log) { log.AppendLine(e.Data); if (log.Length > 8000) log.Remove(0, log.Length - 8000); }
                 };
                 // an FFmpeg that never says it started (shouldn't happen): start the audio clock anyway
-                new Timer(_ => { if (s0 != null) s0.Live = true; if (m0 != null) m0.Live = true; }, null, 5000, Timeout.Infinite);
+                new Timer(_ => { foreach (var p in all) p.Live = true; }, null, 5000, Timeout.Infinite);
                 ff.Start(); Job.Add(ff); ff.BeginErrorReadLine();
                 try { ff.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
-                if (sys != null) sys.Start(); if (mic != null) mic.Start();
+                foreach (var p in all) p.Start();
                 Started = DateTime.Now;
                 logTimer = new Timer(_ => WriteLog(), null, 30000, 60000);   // also while recording, in case the app is closed hard
                 return true;
@@ -181,20 +203,21 @@ namespace HallowClips
             if (logTimer != null) { logTimer.Dispose(); logTimer = null; }
             WriteLog();
             if (sys != null) { sys.Stop(); sys = null; } if (mic != null) { mic.Stop(); mic = null; }
+            foreach (var p in apps) p.Stop(); apps = new List<AudioPipe>();
         }
 
         // v1.1: recorder.log next to the settings - how the last recording went (sound kept in step, FFmpeg's warnings)
         Timer logTimer;
         void WriteLog()
         {
-            var sys = this.sys; var mic = this.mic;
+            var sys = this.sys; var mic = this.mic; var apps = this.apps;
             if (Started == DateTime.MinValue || (sys == null && mic == null && ff == null)) return;
             try
             {
                 var sb = new StringBuilder();
                 sb.AppendLine("Recording " + Started.ToString("yyyy-MM-dd HH:mm:ss") + " - " + DateTime.Now.ToString("HH:mm:ss") + " (" + (int)(DateTime.Now - Started).TotalSeconds + " s)");
-                foreach (var p in new[] { sys, mic })
-                    if (p != null) sb.AppendLine((p.Loopback ? "Game sound" : "Mic") + ": " + p.Rate + " Hz, " + p.Channels + " ch; from Windows " + p.FramesIn + " frames, silence added " + p.FramesPadded + ", trimmed " + p.FramesDropped + ", glitches " + p.Glitches + "; recording started " + p.StartupMs + " ms after the pipe opened");
+                foreach (var p in new[] { sys, mic }.Concat(apps))
+                    if (p != null) sb.AppendLine((p.Pid > 0 ? p.Title + " (process " + p.Pid + ")" : p.Loopback ? "Game sound" : "Mic") + ": " + p.Rate + " Hz, " + p.Channels + " ch; from Windows " + p.FramesIn + " frames, silence added " + p.FramesPadded + ", trimmed " + p.FramesDropped + ", glitches " + p.Glitches + "; recording started " + p.StartupMs + " ms after the pipe opened");
                 sb.AppendLine(); sb.Append(LastLog);
                 File.WriteAllText(Path.Combine(ClipSettings.Dir, SessionFile != null ? "session.log" : "recorder.log"), sb.ToString());
             }
@@ -221,7 +244,7 @@ namespace HallowClips
                 for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { File.Copy(segs[i].FullName, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
                 var lf = Path.Combine(tmp, "list.txt"); File.WriteAllText(lf, list.ToString());
                 var meta = Chapters(tmp, marks, clipStart, (DateTime.Now - clipStart).TotalSeconds);
-                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")
+                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + TitleArgs(trackTitles) + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")   // MPEG-TS pieces can't carry track names: added here
                     { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true });
                 var err = p.StandardError.ReadToEnd(); p.WaitForExit(30000);
                 if (!File.Exists(file) || new FileInfo(file).Length == 0) { error = "Saving failed: " + err.Trim(); return null; }
@@ -260,6 +283,30 @@ namespace HallowClips
             return mp4;
         }
         public string SessionName(string game) { var g = Safe(game); return Path.Combine(S.ClipsFolder, g, g + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + " session.mp4"); }
+
+        // v1.9: the oldest process of that name whose parent isn't the same app (Discord runs several; its sound comes from a child)
+        public static int RootPid(string exe)
+        {
+            try
+            {
+                var name = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? exe : exe + ".exe";
+                var list = new List<Tuple<int, int, DateTime>>();
+                using (var s = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId, CreationDate FROM Win32_Process WHERE Name = '" + name.Replace("'", "") + "'"))
+                    foreach (var o in s.Get())
+                    {
+                        DateTime when = DateTime.MaxValue; try { when = System.Management.ManagementDateTimeConverter.ToDateTime(o["CreationDate"] as string); } catch { }
+                        list.Add(Tuple.Create((int)(uint)o["ProcessId"], (int)(uint)o["ParentProcessId"], when));
+                    }
+                var roots = list.Where(p => !list.Any(q => q.Item1 == p.Item2)).OrderBy(p => p.Item3).ToList();
+                return roots.Count > 0 ? roots[0].Item1 : list.Count > 0 ? list[0].Item1 : 0;
+            }
+            catch { return 0; }
+        }
+        public static string AppTitle(string exe)
+        {
+            var n = Path.GetFileNameWithoutExtension(exe).ToLowerInvariant();
+            return n == "discord" ? "Discord" : n == "spotify" ? "Spotify" : n == "chrome" || n == "msedge" || n == "firefox" ? "Browser" : n.StartsWith("ts3client") || n == "teamspeak" ? "TeamSpeak" : Path.GetFileNameWithoutExtension(exe);
+        }
 
         // v1.1: an FFmpeg left over from a copy of Hallow Clips that was closed hard (older versions, an update) still writes to
         // our folder - stop it before starting our own. Only FFmpeg runs of Hallow Clips' own FFmpeg that mention that folder.

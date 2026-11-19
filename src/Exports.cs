@@ -62,8 +62,8 @@ namespace HallowClips
                     inputs.Append("-i " + Arg(clips[i]) + " ");
                     var len = infos[i].VideoDuration > 0 ? Math.Min(infos[i].VideoDuration, infos[i].Duration) : infos[i].Duration;
                     fc.Append("[" + i + ":v:0]" + norm() + ",trim=duration=" + F(len) + ",setpts=PTS-STARTPTS[v" + n + "];");
-                    if (infos[i].AudioTracks >= 2) fc.Append("[" + i + ":a:0][" + i + ":a:1]amix=inputs=2:duration=first:normalize=0," + anorm + ",apad,atrim=duration=" + F(len) + ",asetpts=PTS-STARTPTS[a" + n + "];");
-                    else if (infos[i].AudioTracks == 1) fc.Append("[" + i + ":a:0]" + anorm + ",apad,atrim=duration=" + F(len) + ",asetpts=PTS-STARTPTS[a" + n + "];");
+                    var mix = ClipOps.MixFilter(i, ClipOps.ExportTracks(infos[i]), "m" + n);   // v1.9: the chosen sound tracks
+                    if (mix != null) fc.Append(mix + ";[m" + n + "]" + anorm + ",apad,atrim=duration=" + F(len) + ",asetpts=PTS-STARTPTS[a" + n + "];");
                     else fc.Append("anullsrc=r=48000:cl=stereo,atrim=duration=" + F(len) + "," + anorm + "[a" + n + "];");
                     parts.Add(len); n++;
                 }
@@ -126,8 +126,8 @@ namespace HallowClips
                 string venc = fam == "nvenc" ? "-c:v h264_nvenc -preset p5 -rc vbr -b:v " + v + "k -maxrate " + (v * 3 / 2) + "k -bufsize " + (v * 2) + "k"
                     : fam == "mf" ? "-c:v h264_mf -b:v " + v + "k" : "-c:v " + enc + " -b:v " + v + "k -maxrate " + (v * 3 / 2) + "k -bufsize " + (v * 2) + "k";
                 var a = new StringBuilder("-hide_banner -loglevel error -y -i " + Arg(clip) + " ");
-                if (info.AudioTracks >= 2) a.Append("-filter_complex \"[0:a:0][0:a:1]amix=inputs=2:duration=first:normalize=0[a]\" -map 0:v:0 -map \"[a]\" ");
-                else a.Append("-map 0:v:0 -map 0:a:0? ");
+                var mix = ClipOps.MixFilter(0, ClipOps.ExportTracks(info), "a");
+                if (mix != null) a.Append("-filter_complex \"" + mix + "\" -map 0:v:0 -map \"[a]\" "); else a.Append("-map 0:v:0 ");
                 a.Append("-vf \"" + PhoneFilter(pos) + ",format=yuv420p\" " + venc + " -c:a aac -b:a " + audioK + "k -ac 2 -movflags +faststart " + Arg(file));
                 if (progress != null) progress(attempt == 1 ? "Making the phone version..." : "A bit smaller (try " + attempt + ")...");
                 string err; int exit; ClipOps.Run(ffmpeg, a.ToString(), 1800000, out err, out exit);

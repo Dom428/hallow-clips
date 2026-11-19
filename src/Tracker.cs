@@ -27,7 +27,7 @@ namespace HallowClips
             finally { CloseHandle(h); }
         }
 
-        public class Running { public Game Game; public DateTime Since; public DateTime LastCount; public int Missed; public string Process; }
+        public class Running { public Game Game; public DateTime Since; public DateTime LastCount; public int Missed; public string Process; public int Pid; }   // Pid (v1.9): the game's oldest process
         public readonly Dictionary<string, Running> Now = new Dictionary<string, Running>();
         public Action<Game> Started; public Action<Game, DateTime> Stopped;   // Stopped gets when the session began
         public Action<Game, double> Counted;   // minutes to add to a game's playtime
@@ -36,7 +36,7 @@ namespace HallowClips
         public void Poll(List<Game> games)
         {
             var dirs = games.Where(g => !string.IsNullOrEmpty(g.InstallDir)).Select(g => Tuple.Create(g, g.InstallDir.TrimEnd('\\') + "\\")).ToList();
-            var seen = new Dictionary<string, string>();
+            var seen = new Dictionary<string, string>(); var pids = new Dictionary<string, Tuple<int, DateTime>>();
             foreach (var p in Process.GetProcesses())
             {
                 try
@@ -44,7 +44,13 @@ namespace HallowClips
                     if (p.Id <= 4 || Ignore.Contains(p.ProcessName)) continue;
                     var path = PathOf(p.Id); if (path == null) continue;
                     foreach (var d in dirs)
-                        if (path.StartsWith(d.Item2, StringComparison.OrdinalIgnoreCase) && !seen.ContainsKey(d.Item1.Id)) { seen[d.Item1.Id] = p.ProcessName; break; }
+                        if (path.StartsWith(d.Item2, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!seen.ContainsKey(d.Item1.Id)) seen[d.Item1.Id] = p.ProcessName;
+                            DateTime st = DateTime.MaxValue; try { st = p.StartTime; } catch { }
+                            Tuple<int, DateTime> old; if (!pids.TryGetValue(d.Item1.Id, out old) || st < old.Item2) pids[d.Item1.Id] = Tuple.Create(p.Id, st);
+                            break;
+                        }
                 }
                 catch { }
                 finally { p.Dispose(); }
@@ -59,7 +65,7 @@ namespace HallowClips
                     r = new Running { Game = g, Since = now, LastCount = now, Process = seen[id] }; Now[id] = r;
                     if (Started != null) Started(g);
                 }
-                r.Missed = 0;
+                r.Missed = 0; Tuple<int, DateTime> pp; if (pids.TryGetValue(id, out pp)) r.Pid = pp.Item1;
                 var mins = (now - r.LastCount).TotalMinutes;
                 if (mins >= 1) { r.LastCount = now; if (Counted != null) Counted(r.Game, mins); }
             }

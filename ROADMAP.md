@@ -13,12 +13,9 @@
 | **1.6** | Use the Hallow accent (theme.json, live), crash reports kept on this PC with a notice next start and lastCrash in status; FFmpeg never left running |
 | **1.7** | Highlight reel (copy or one GPU re-encode, crossfades, title card), clip titles and thumbnail picker, GIF and 9:16 phone exports |
 | **1.8** | Updates itself from GitHub (asks first, SHA-256, never FFmpeg), Ctrl+Alt+P screenshots, Ctrl+Alt+B markers as chapters |
+| **1.9** | Game, Discord and other picked apps on their own sound tracks (per-process loopback, Windows 10 2004+), sound tracks chosen for exports |
 
 ## Next
-### 1.9 - Separate sound per app
-- Game, Discord (or other apps you pick) on their own tracks with Windows' per-app capture, next to everything + mic; falls back to today's capture on older Windows
-- Choose which sound tracks go into exports (Discord copy, phone version, highlight reel)
-
 ### 1.10 - Webcam and memory buffer
 - Optional webcam overlay (corner and size)
 - Replay buffer in memory instead of on disk (optional), to spare the SSD

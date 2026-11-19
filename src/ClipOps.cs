@@ -43,7 +43,7 @@ namespace HallowClips
         {
             var info = new Info(); var probe = Probe(ffmpeg); if (probe == null) return info;
             string err; int exit;
-            var s = Run(probe, "-v error -show_entries format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,sample_rate,duration -of compact=p=0:nk=0 \"" + clip + "\"", 15000, out err, out exit) ?? "";
+            var s = Run(probe, "-v error -show_entries format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,sample_rate,duration:stream_tags=title,name -of compact=p=0:nk=0 \"" + clip + "\"", 15000, out err, out exit) ?? "";
             foreach (var line in s.Split('\n'))
             {
                 Func<string, string> val = key => { var m = System.Text.RegularExpressions.Regex.Match(line, "(?:^|\\|)" + key + "=([^|\\r\\n]+)"); return m.Success ? m.Groups[1].Value.Trim() : ""; };
@@ -54,7 +54,7 @@ namespace HallowClips
                     var fr = val("avg_frame_rate").Split('/'); double n, dd;
                     if (fr.Length == 2 && double.TryParse(fr[0], NumberStyles.Float, Inv, out n) && double.TryParse(fr[1], NumberStyles.Float, Inv, out dd) && dd > 0) info.Fps = Math.Round(n / dd, 2);
                 }
-                if (line.Contains("codec_type=audio")) { info.AudioTracks++; if (info.SampleRate == 0) int.TryParse(val("sample_rate"), out info.SampleRate); }
+                if (line.Contains("codec_type=audio")) { info.AudioTracks++; var tt = val("tag:title"); if (tt == "") tt = val("tag:name"); info.TrackTitles.Add(tt); if (info.SampleRate == 0) int.TryParse(val("sample_rate"), out info.SampleRate); }
                 var d = System.Text.RegularExpressions.Regex.Match(line, "^duration=([0-9.]+)\\s*$"); if (d.Success) double.TryParse(d.Groups[1].Value, NumberStyles.Float, Inv, out info.Duration);
             }
             // v1.8: chapters made from markers (all but the first, "Start")
@@ -69,6 +69,31 @@ namespace HallowClips
             }
             info.Keys.Sort(); if (info.Keys.Count == 0) info.Keys.Add(0);
             return info;
+        }
+
+        // ---- v1.9: which sound tracks go into exports (Settings > Sound in exports). Tracks are found by their names;
+        // clips from before 1.9 have no names: track 1 is everything, track 2 the mic.
+        public static string ExportChoice = "all";   // all (everything + mic), nomic, game, gamemic
+        public static List<int> ExportTracks(Info info)
+        {
+            var r = new List<int>(); int n = info.AudioTracks; if (n == 0) return r;
+            var t = info.TrackTitles;
+            Func<string, int> find = name => t.FindIndex(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
+            int all = find("Game and chat"); if (all < 0) all = 0;
+            int mic = find("Your mic"); if (mic < 0 && n >= 2 && t.All(string.IsNullOrEmpty)) mic = 1;
+            int game = find("Game");
+            if (ExportChoice == "nomic") r.Add(all);
+            else if (ExportChoice == "game") r.Add(game >= 0 ? game : all);
+            else if (ExportChoice == "gamemic") { r.Add(game >= 0 ? game : all); r.Add(mic); }
+            else { r.Add(all); r.Add(mic); }
+            return r.Where(i => i >= 0 && i < n).Distinct().ToList();
+        }
+        // "[in:a:x][in:a:y]amix...[out]" (or one track as is); null when there's no sound
+        public static string MixFilter(int input, List<int> tracks, string outLabel)
+        {
+            if (tracks.Count == 0) return null;
+            if (tracks.Count == 1) return "[" + input + ":a:" + tracks[0] + "]anull[" + outLabel + "]";
+            return string.Concat(tracks.Select(k => "[" + input + ":a:" + k + "]")) + "amix=inputs=" + tracks.Count + ":duration=first:normalize=0[" + outLabel + "]";
         }
 
         // a free file name next to `file`: "<name> <suffix>.mp4", "<name> <suffix> 2.mp4", ...
@@ -118,8 +143,8 @@ namespace HallowClips
                     : enc == "h264_qsv" ? "-c:v h264_qsv -b:v " + v + "k -maxrate " + v + "k -bufsize " + (v * 2) + "k"
                     : "-c:v h264_mf -b:v " + v + "k";
                 var a = new StringBuilder("-hide_banner -loglevel error -y -i \"" + clip + "\" ");
-                if (info.AudioTracks >= 2) a.Append("-filter_complex \"[0:a:0][0:a:1]amix=inputs=2:duration=first:normalize=0[a]\" -map 0:v:0 -map \"[a]\" ");   // game + mic in one track
-                else a.Append("-map 0:v:0 -map 0:a:0? ");
+                var mix = MixFilter(0, ExportTracks(info), "a");   // v1.9: the sound tracks you chose for exports, in one track
+                if (mix != null) a.Append("-filter_complex \"" + mix + "\" -map 0:v:0 -map \"[a]\" "); else a.Append("-map 0:v:0 ");
                 a.Append("-vf \"scale=-2:'min(" + h + ",ih)',fps=" + fps + ",format=yuv420p\" " + venc + " -c:a aac -b:a " + audioK + "k -ac 2 -movflags +faststart \"" + file + "\"");
                 if (progress != null) progress(attempt == 1 ? "Making a Discord copy (" + h + "p)..." : "A bit smaller (try " + attempt + ")...");
                 string err; int exit; Run(ffmpeg, a.ToString(), 600000, out err, out exit);

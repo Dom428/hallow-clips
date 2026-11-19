@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.9
+- Own sound tracks: the game and Discord (or Spotify, your browser, TeamSpeak) each on their own track.
+- Sound in exports: choose what goes into Discord copies, phone versions and highlight reels.
+
 WHAT'S NEW IN 1.8
 - Updates itself: an Update button appears when a new version is out (asks first, never touches FFmpeg).
 - Ctrl+Alt+P takes a screenshot; Ctrl+Alt+B marks a moment while recording (chapters in the clip, jump points in Trim).
@@ -48,7 +52,9 @@ WHAT'S NEW IN 1.1
 HOW IT WORKS
 - While a game runs, Hallow Clips keeps the last moments in a rolling buffer (it keeps overwriting itself).
 - Press Ctrl+Alt+S and the last 30 seconds are saved as an MP4 in Videos\Hallow Clips\<game>.
-- Your game sound and your mic are on separate tracks (turn the mic off in the app).
+- Your game sound and your mic are on separate tracks (turn the mic off in the app). "Own sound tracks" also puts
+  the game itself and Discord (or Spotify, your browser, TeamSpeak) on tracks of their own (Windows 10 2004 or newer).
+  "Sound in exports" picks what goes into Discord copies, phone versions and highlight reels.
 - Recording runs on your graphics card (NVIDIA, AMD or Intel), so games barely notice.
 - 15 s to 2 min clips, 30 or 60 fps, three quality levels, pick your screen.
 - Highlight reel (above your clips): tick clips, order them, join them into one video in the Highlights folder.

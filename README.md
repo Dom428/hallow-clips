@@ -4,7 +4,7 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 
 - Keeps the last moments of your game in a rolling buffer while a game runs; **Ctrl+Alt+S** saves them as an MP4
 - Screen grabbed with Desktop Duplication and encoded on the graphics card (NVENC / AMF / Quick Sync)
-- Game sound (WASAPI loopback) and your mic on **separate audio tracks**
+- Game sound (WASAPI loopback) and your mic on **separate audio tracks**; on Windows 10 2004+ also the **game, Discord, Spotify, browser or TeamSpeak on their own tracks** (per-process loopback), and a choice of which tracks go into exports
 - 15 s to 2 min, 30 / 60 fps, quality levels, any screen; clip list with thumbnails
 - **Highlight reel**: pick and order clips, joined with `-c copy` when the formats match, otherwise one GPU re-encode; optional crossfades and title card
 - Clip titles (MP4 title metadata, in the list and `status.json`), pick the thumbnail frame, GIF export (palettegen/paletteuse, up to 15 s, 320-640 px) and a 9:16 phone version under 50 MB
