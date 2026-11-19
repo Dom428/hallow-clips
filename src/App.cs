@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.9.0.0")]
-[assembly: AssemblyFileVersion("1.9.0.0")]
+[assembly: AssemblyVersion("1.10.0.0")]
+[assembly: AssemblyFileVersion("1.10.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.9";
+        public const string Version = "1.10";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -115,7 +115,7 @@ namespace HallowClips
         public MainWindow(bool hidden)
         {
             startHidden = hidden; rec = new Recorder(S); ClipOps.ExportChoice = S.ExportSound ?? "all";
-            Title = "Hallow Clips"; Width = 820; Height = 900; MinWidth = 700; MinHeight = 560;
+            Title = "Hallow Clips"; Width = 820; Height = 820; MinWidth = 700; MinHeight = 560;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             try { Icon = AppIcon(); } catch { }
@@ -155,7 +155,7 @@ namespace HallowClips
             else if (!sessionKeyOk) Status("Ctrl+Alt+R is taken by another app - use the Record session button instead.");
             else if (!shotKeyOk || !markKeyOk) Status((!shotKeyOk ? "Ctrl+Alt+P" : "Ctrl+Alt+B") + " is taken by another app - use the Hallow icon menu instead.");
             DateTime lastCheck; if (!DateTime.TryParse(S.LastUpdateCheck, out lastCheck) || (DateTime.Now - lastCheck).TotalHours > 20) CheckForUpdate(false);
-            FindCodecs(); FinishLeftoverSessions();
+            FindCodecs(); FinishLeftoverSessions(); FindWebcams();
             Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
             Family.Serve("Clips", Command);
             var host = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) }; host.Tick += (s, e) => CheckTrayHost(); host.Start(); CheckTrayHost();
@@ -368,6 +368,12 @@ namespace HallowClips
             bool want = S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null);
             var gp = S.PerAppSound && Current != null ? Current.Pid : 0;
             if (want && rec.Running && S.PerAppSound && gp != rec.GamePid && ProcessAudio.Supported) rec.Stop();   // v1.9: a game started or ended - restart so it gets its own track
+            if (want && !rec.Running && rec.Crashed && (DateTime.Now - rec.Started).TotalSeconds < 20)
+            {
+                // v1.10: FFmpeg stopped right after starting - try again without the webcam, then without the memory buffer
+                if (rec.WebcamUsed && !rec.NoWebcam) { rec.NoWebcam = true; Status("The webcam couldn't be opened (in use by another app or unplugged) - recording without it."); }
+                else if (S.RamBuffer && !rec.NoRam) { rec.NoRam = true; Status("The replay couldn't be kept in memory - using the disk instead."); }
+            }
             if (want && !rec.Running) { rec.GamePid = gp; if (!rec.Start()) Status(rec.Error); }
             else if (!want && rec.Running) rec.Stop();
             UpdateState(); WriteStatus(false);
@@ -418,7 +424,10 @@ namespace HallowClips
             updateBtn = new Button { Content = "Update", Style = (Style)FindResource("Accent"), Margin = new Thickness(0, 0, 8, 0), Visibility = pending != null ? Visibility.Visible : Visibility.Collapsed };
             if (pending != null) updateBtn.Content = "Update to v" + pending.Version.ToString(2);
             updateBtn.Click += (s, e) => InstallUpdate();
-            hb.Children.Add(updateBtn); hb.Children.Add(sessionBtn); hb.Children.Add(saveNow); head.Children.Add(hb);
+            // v1.10: the settings fold away (there are many now) - the clips get the room
+            var gear = new Button { Content = "Settings", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Show or hide the settings" };
+            gear.Click += (s, e) => { showSettings = !showSettings; if (settingsPanel != null) settingsPanel.Visibility = showSettings ? Visibility.Visible : Visibility.Collapsed; };
+            hb.Children.Add(updateBtn); hb.Children.Add(gear); hb.Children.Add(sessionBtn); hb.Children.Add(saveNow); head.Children.Add(hb);
             root.Children.Add(head);
             // status card
             var card = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
@@ -439,6 +448,7 @@ namespace HallowClips
             card.Child = cs; root.Children.Add(card);
             // settings
             var set = new StackPanel { Margin = new Thickness(0, 0, 0, 10) }; DockPanel.SetDock(set, Dock.Top);
+            settingsPanel = set; if (S.Ffmpeg == null) showSettings = true; set.Visibility = showSettings ? Visibility.Visible : Visibility.Collapsed;
             Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, FrameworkElement> chips = null;
             Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, bool, FrameworkElement> chipRow = (label, opts, get, setv, restart) =>
             {
@@ -501,6 +511,24 @@ namespace HallowClips
             apps.Children.Add(awp);
             apps.ToolTip = supported ? "Each app you pick gets its own sound track next to everything + your mic (the game is the one that's running). An app started after recording began gets its track at the next start." : "Needs Windows 10 version 2004 or newer - your clips keep everything + mic.";
             set.Children.Add(apps);
+            // v1.10: webcam in a corner (cameras are listed in the background; listing doesn't switch one on)
+            webcamRow = new ContentControl(); set.Children.Add(webcamRow);
+            FillWebcamRow = () =>
+            {
+                var cams = webcams ?? new List<string>();
+                if (cams.Count == 0 && string.IsNullOrEmpty(S.Webcam)) { webcamRow.Content = null; return; }
+                var all = new List<string>(cams); if (!string.IsNullOrEmpty(S.Webcam) && !all.Contains(S.Webcam)) all.Add(S.Webcam);
+                var sp2 = new StackPanel();
+                sp2.Children.Add(chips("Webcam", new[] { Tuple.Create("", "Off") }.Concat(all.Select(c => Tuple.Create(c, c.Length > 28 ? c.Substring(0, 26) + "..." : c))), () => S.Webcam ?? "", v => { S.Webcam = v; Dispatcher.BeginInvoke(new Action(FillWebcamRow)); }));
+                if (!string.IsNullOrEmpty(S.Webcam))
+                {
+                    sp2.Children.Add(chips("Webcam corner", new[] { Tuple.Create("tl", "Top left"), Tuple.Create("tr", "Top right"), Tuple.Create("bl", "Bottom left"), Tuple.Create("br", "Bottom right") }, () => S.WebcamCorner ?? "br", v => S.WebcamCorner = v));
+                    sp2.Children.Add(chips("Webcam size", new[] { Tuple.Create("small", "Small"), Tuple.Create("medium", "Medium"), Tuple.Create("large", "Large") }, () => S.WebcamSize ?? "medium", v => S.WebcamSize = v));
+                }
+                webcamRow.Content = sp2;
+                webcamRow.ToolTip = "Your webcam in a corner of clips and sessions. A session started while the replay uses the camera records without it (a camera can only be opened once).";
+            };
+            FillWebcamRow();
             set.Children.Add(chipRow("Sound in exports", new[] { Tuple.Create("all", "Everything + mic"), Tuple.Create("nomic", "Everything, no mic"), Tuple.Create("game", "Game only"), Tuple.Create("gamemic", "Game + mic") },
                 () => S.ExportSound ?? "all", v => { S.ExportSound = v; ClipOps.ExportChoice = v; }, false));
             Func<string, bool, Action<bool>, CheckBox> sw = (text, on, setv) =>
@@ -511,6 +539,7 @@ namespace HallowClips
             replaySwitch = sw("Instant replay on", S.On, v => S.On = v);
             sw("Only while a game is running (otherwise it records your desktop too)", S.OnlyInGame, v => S.OnlyInGame = v);
             sw("Record my mic on its own track", S.Mic, v => S.Mic = v);
+            sw("Keep the replay in memory instead of on disk (spares your SSD; a 2 min buffer at Best can use about 1 GB of RAM)", S.RamBuffer, v => S.RamBuffer = v);
             sw("Keep running in the tray when I close this window", S.TrayOnClose, v => S.TrayOnClose = v);
             sw("Start with Windows (in the tray)", StartsWithWindows(), v => SetStartWithWindows(v));
             // v1.5: one tray icon for the whole Hallow family - Hallow Hub hosts it when it runs
@@ -541,7 +570,8 @@ namespace HallowClips
             return root;
         }
 
-        void Restart() { if (rec.Running) rec.Stop(); Decide(); }
+        StackPanel settingsPanel; bool showSettings;
+        void Restart() { if (rec.Running) rec.Stop(); rec.NoWebcam = false; rec.NoRam = false; Decide(); }
 
         void UpdateState()
         {
@@ -656,7 +686,7 @@ namespace HallowClips
             if (finishing) return;
             if (session != null) { StopSession(); return; }
             if (S.Ffmpeg == null) { toast.Flash("Hallow Clips isn't set up yet"); return; }
-            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name); r.GamePid = S.PerAppSound && Current != null ? Current.Pid : 0;
+            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name); r.NoWebcam = rec.Running && rec.WebcamUsed;   // the camera is busy in the replay r.GamePid = S.PerAppSound && Current != null ? Current.Pid : 0;
             if (!r.Start()) { toast.Flash("Couldn't start recording"); Status(r.Error); return; }
             session = r;
             toast.Flash("Recording the whole session - Ctrl+Alt+R stops");
@@ -824,6 +854,14 @@ namespace HallowClips
                 catch (Exception ex) { Status("Made " + r + " but couldn't copy it: " + ex.Message); }
             });
         }
+        // ---- v1.10: webcams
+        List<string> webcams; ContentControl webcamRow; Action FillWebcamRow;
+        void FindWebcams()
+        {
+            var ff = S.Ffmpeg; if (ff == null) return;
+            new Thread(() => { var l = Recorder.Webcams(ff); Dispatcher.BeginInvoke(new Action(() => { webcams = l; FillWebcamRow(); })); }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+
         // ---- v1.8: updates from GitHub (asks first; FFmpeg is never part of an update)
         Button updateBtn; GhRelease pending;
         void CheckForUpdate(bool manual)
@@ -1022,7 +1060,10 @@ namespace HallowClips
 
         public void SnapAll(string dir)
         {
-            Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 820);
+            showSettings = true; settingsPanel.Visibility = Visibility.Visible;
+            Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 1080);
+            showSettings = false; settingsPanel.Visibility = Visibility.Collapsed;
+            Snap.Save(this, System.IO.Path.Combine(dir, "main-folded.png"), 820, 900);
             Snap.Save(new WhatsNewWindow(WhatsNew.Notes.ToList()), System.IO.Path.Combine(dir, "whatsnew.png"), 560, 0);
             Snap.Save(new CrashNotice(System.IO.Path.Combine(Crash.Dir, "2026-11-19 20-00-00.txt")), System.IO.Path.Combine(dir, "crash.png"), 520, 0);
             var clip = RecentClips(1).FirstOrDefault();

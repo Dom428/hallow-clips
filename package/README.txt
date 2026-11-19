@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.10
+- Webcam in a corner of your clips and sessions (Settings > Webcam).
+- Keep the replay in memory instead of on disk to spare your SSD (Settings).
+- Settings fold away behind the Settings button.
+
 WHAT'S NEW IN 1.9
 - Own sound tracks: the game and Discord (or Spotify, your browser, TeamSpeak) each on their own track.
 - Sound in exports: choose what goes into Discord copies, phone versions and highlight reels.
@@ -59,6 +64,7 @@ HOW IT WORKS
 - 15 s to 2 min clips, 30 or 60 fps, three quality levels, pick your screen.
 - Highlight reel (above your clips): tick clips, order them, join them into one video in the Highlights folder.
 - The ... button on a clip: set a title, pick its thumbnail, export a GIF or a 9:16 phone version.
+- Settings (the Settings button): webcam in a corner of your clips, and "keep the replay in memory" to spare your SSD.
 - Ctrl+Alt+P saves a screenshot (Videos\Hallow Clips\<game>\Screenshots). Ctrl+Alt+B marks a moment while recording -
   markers become chapters in the clip and jump points when you trim.
 - Ctrl+Alt+R (or Record session) records everything until you press it again - saved as an MP4 in the same folder.

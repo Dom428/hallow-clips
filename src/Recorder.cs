@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
@@ -35,13 +36,17 @@ namespace HallowClips
         [DataMember] public bool PerAppSound = true;      // v1.9: the game and AppTracks on their own sound tracks
         [DataMember] public bool GameTrack = true;        // v1.9: the running game on its own track
         [DataMember] public List<string> AppTracks = new List<string> { "Discord" };   // v1.9: exe names
-        [DataMember] public string ExportSound = "all";   // v1.9: all (everything + mic), nomic, game, gamemic
+        [DataMember] public string ExportSound = "all";
+        [DataMember] public string Webcam = "";           // v1.10: camera name, "" = no webcam
+        [DataMember] public string WebcamCorner = "br";   // v1.10: tl, tr, bl, br
+        [DataMember] public string WebcamSize = "medium"; // v1.10: small, medium, large
+        [DataMember] public bool RamBuffer = false;       // v1.10: keep the replay buffer in memory   // v1.9: all (everything + mic), nomic, game, gamemic
         [DataMember] public bool UseHallowAccent = true; // v1.6: the Hallow accent colour from theme.json
         [DataMember] public string LastCrashShown = "";  // v1.6: the crash report already told about
         [DataMember] public bool UseHallowIcon = true;   // v1.5: hide our tray icon while Hallow Hub hosts the family icon
         [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
         [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; CodecsFor = ""; Codecs = new List<string>(); }
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; Webcam = ""; WebcamCorner = "br"; WebcamSize = "medium"; RamBuffer = false; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_DATA"); return !string.IsNullOrEmpty(t) ? t : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }   // tests use their own folder
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -76,6 +81,25 @@ namespace HallowClips
         public int GamePid;
         IEnumerable<AudioPipe> Pipes { get { return new[] { sys, mic }.Concat(apps).Where(p => p != null); } }
         public int AppTracks { get { return apps.Count; } }
+        // v1.10: webcam + memory buffer. The app sets NoWebcam / NoRam after a start that failed with them.
+        public bool NoWebcam, NoRam, WebcamUsed; RamBuffer ram, lastRam;
+        public bool InMemory { get { return ram != null; } }
+        public bool Crashed { get { try { return ff != null && ff.HasExited; } catch { return false; } } }   // FFmpeg ended by itself
+        public long MemoryBytes { get { var r = ram; return r == null ? 0 : r.Bytes; } }
+        public static string TestCamera { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_CAMERA"); } }   // tests: a generated picture instead of a camera
+        static string WebcamInput(string name)
+        {
+            if (!string.IsNullOrEmpty(TestCamera)) return "-f lavfi -i testsrc2=s=640x360:r=30";
+            return "-f dshow -rtbufsize 64M -video_size 1280x720 -i video=\"" + name.Replace("\"", "") + "\"";
+        }
+        // the webcams DirectShow lists (names) - reading the list doesn't switch a camera on
+        public static List<string> Webcams(string ffmpeg)
+        {
+            var r = new List<string>(); if (!string.IsNullOrEmpty(TestCamera)) { r.Add("Test camera"); return r; }
+            string err; int exit; ClipOps.Run(ffmpeg, "-hide_banner -list_devices true -f dshow -i dummy", 15000, out err, out exit);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(err ?? "", "\"([^\"]+)\" \\(video\\)")) if (!r.Contains(m.Groups[1].Value)) r.Add(m.Groups[1].Value);
+            return r;
+        }
         List<string> trackTitles = new List<string>();
         static string TitleArgs(List<string> titles) { var sb = new StringBuilder(); for (int k = 0; k < titles.Count; k++) sb.Append("-metadata:s:a:" + k + " title=\"" + titles[k].Replace("\"", "") + "\" "); return sb.ToString(); }
         public string BufferDir { get { return Path.Combine(ClipSettings.Dir, "buffer"); } }
@@ -124,7 +148,7 @@ namespace HallowClips
 
         public bool Start()
         {
-            Stop(); Error = null;
+            Stop(); Error = null; lastRam = null;
             var exe = S.Ffmpeg; if (exe == null) { Error = "FFmpeg isn't set up yet."; return false; }
             Codec = S.Codec == "hevc" || S.Codec == "av1" ? S.Codec : "h264";
             segExt = Codec == "av1" ? "mkv" : "ts";   // MPEG-TS can't carry AV1
@@ -152,15 +176,25 @@ namespace HallowClips
             int seg = 2, wrap = S.Seconds / seg + 6;
             var fam = GpuFamily(exe);
             var q = S.Quality == "max" ? 18 : S.Quality == "medium" ? 28 : 23;
-            var v = (fam == "mf" ? "-vf hwdownload,format=bgra " : "") + VideoArgs(fam, Codec, q);
+            // v1.10: webcam in a corner (the screen comes off the graphics card for that); NoWebcam = it failed last time
+            var cam = !NoWebcam && !string.IsNullOrEmpty(S.Webcam) ? S.Webcam : null; WebcamUsed = cam != null;
+            var v = (fam == "mf" && cam == null ? "-vf hwdownload,format=bgra " : "") + VideoArgs(fam, Codec, q);
             var a = new StringBuilder();
             a.Append("-hide_banner -loglevel info -nostats -y ");   // info: "Press [q]" tells us when recording really starts
             a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
-            int idx = 1; var maps = "-map 0:v ";
+            int idx = 1; var maps = cam != null ? "-map \"[vout]\" " : "-map 0:v ";
             foreach (var p in Pipes)
             {
                 a.AppendFormat(CultureInfo.InvariantCulture, "-f {3} -ar {0} -ac {1} -i \\\\.\\pipe\\{2} ", p.Rate, p.Channels, p.PipeName, p.Format);
                 maps += "-map " + idx + ":a "; idx++;
+            }
+            if (cam != null)
+            {
+                a.Append(WebcamInput(cam) + " ");
+                double size = S.WebcamSize == "large" ? 0.30 : S.WebcamSize == "small" ? 0.15 : 0.22;
+                var corner = S.WebcamCorner ?? "br";
+                var x = corner.EndsWith("l") ? "24" : "main_w-overlay_w-24"; var y = corner.StartsWith("t") ? "24" : "main_h-overlay_h-24";
+                a.Append("-filter_complex \"[0:v]hwdownload,format=bgra,split[s0][sref];[" + idx + ":v]setpts=PTS-STARTPTS,format=bgra[c0];[c0][sref]scale=w=trunc(rw*" + size.ToString(CultureInfo.InvariantCulture) + "/2)*2:h=-2[c1];[s0][c1]overlay=x=" + x + ":y=" + y + ":eof_action=pass:format=auto[vout]\" ");   // camera width = a share of the screen width
             }
             a.Append(maps);
             a.Append(v + " ");
@@ -169,7 +203,13 @@ namespace HallowClips
             trackTitles = Pipes.Select(p => p == sys ? "Game and chat" : p == mic ? "Your mic" : p.Title).ToList();
             a.Append(TitleArgs(trackTitles));   // exports pick tracks by these names
             if (SessionFile != null) a.Append("-f matroska \"" + Path.ChangeExtension(SessionFile, ".mkv") + "\"");
-            else a.AppendFormat(CultureInfo.InvariantCulture, "-f segment -segment_time {0} -segment_format {1} -segment_wrap {2} -reset_timestamps 1 \"{3}\"", seg, segExt == "ts" ? "mpegts" : "matroska", wrap, Path.Combine(BufferDir, "seg%03d." + segExt));
+            else
+            {
+                // v1.10: in memory - FFmpeg writes each 2 s piece into a pipe that Clips holds in RAM (nothing on the SSD)
+                ram = S.RamBuffer && !NoRam ? new RamBuffer(wrap, segExt) : null;
+                a.AppendFormat(CultureInfo.InvariantCulture, "-f segment -segment_time {0} -segment_format {1} -segment_wrap {2} -reset_timestamps 1 \"{3}\"", seg, segExt == "ts" ? "mpegts" : "matroska", wrap, ram != null ? ram.Pattern : Path.Combine(BufferDir, "seg%03d." + segExt));
+                if (ram != null) ram.Start();
+            }
             try
             {
                 ff = new Process { StartInfo = new ProcessStartInfo(exe, a.ToString()) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardInput = true } };
@@ -204,6 +244,7 @@ namespace HallowClips
             WriteLog();
             if (sys != null) { sys.Stop(); sys = null; } if (mic != null) { mic.Stop(); mic = null; }
             foreach (var p in apps) p.Stop(); apps = new List<AudioPipe>();
+            if (ram != null) { lastRam = ram; ram.Stop(); ram = null; }   // its pieces stay readable until the next start
         }
 
         // v1.1: recorder.log next to the settings - how the last recording went (sound kept in step, FFmpeg's warnings)
@@ -231,9 +272,12 @@ namespace HallowClips
         {
             error = null;
             var since = DateTime.Now.AddSeconds(-seconds - 1);
-            var segs = Directory.GetFiles(BufferDir, "seg*." + segExt).Select(f => new FileInfo(f)).Where(f => f.Length > 0 && f.LastWriteTime >= since).OrderBy(f => f.LastWriteTime).ToList();
+            // pieces: (file or bytes in memory, when it ended)
+            var r = ram ?? lastRam; List<Tuple<string, byte[], DateTime>> segs;
+            if (r != null) segs = r.Since(since).Select(x => Tuple.Create((string)null, x.Item1, x.Item2)).ToList();
+            else segs = Directory.GetFiles(BufferDir, "seg*." + segExt).Select(f => new FileInfo(f)).Where(f => f.Length > 0 && f.LastWriteTime >= since).OrderBy(f => f.LastWriteTime).Select(f => Tuple.Create(f.FullName, (byte[])null, f.LastWriteTime)).ToList();
             if (segs.Count == 0) { error = "Nothing recorded yet."; return null; }
-            var clipStart = segs[0].LastWriteTime.AddSeconds(-2);   // a finished piece is written up to its end; pieces are 2 s
+            var clipStart = segs[0].Item3.AddSeconds(-2);   // a finished piece is written up to its end; pieces are 2 s
             var dir = Path.Combine(S.ClipsFolder, Safe(name)); Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, Safe(name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".mp4");
             // copy the pieces first: FFmpeg keeps writing the newest one
@@ -241,7 +285,7 @@ namespace HallowClips
             try
             {
                 var list = new StringBuilder();
-                for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { File.Copy(segs[i].FullName, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
+                for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { if (segs[i].Item2 != null) File.WriteAllBytes(c, segs[i].Item2); else File.Copy(segs[i].Item1, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
                 var lf = Path.Combine(tmp, "list.txt"); File.WriteAllText(lf, list.ToString());
                 var meta = Chapters(tmp, marks, clipStart, (DateTime.Now - clipStart).TotalSeconds);
                 var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + TitleArgs(trackTitles) + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")   // MPEG-TS pieces can't carry track names: added here
@@ -283,6 +327,53 @@ namespace HallowClips
             return mp4;
         }
         public string SessionName(string game) { var g = Safe(game); return Path.Combine(S.ClipsFolder, g, g + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + " session.mp4"); }
+
+        // v1.10: the replay buffer in memory. FFmpeg's segment muxer opens \\.\pipe\<id>_NNN.ts for each 2 s piece; the pipe for the
+        // next piece is ready as soon as the current one connects, and a piece's bytes are kept until its slot comes round again.
+        class RamBuffer
+        {
+            readonly string id = "hallowclips_seg_" + Process.GetCurrentProcess().Id + "_" + Environment.TickCount; readonly int wrap; readonly string ext;
+            readonly object gate = new object(); volatile bool stop;
+            readonly Dictionary<int, Tuple<byte[], DateTime>> done = new Dictionary<int, Tuple<byte[], DateTime>>();
+            MemoryStream current; NamedPipeServerStream waiting;
+            public RamBuffer(int wrap, string ext) { this.wrap = wrap; this.ext = ext; }
+            public string Pattern { get { return "\\\\.\\pipe\\" + id + "_%03d." + ext; } }
+            public void Start() { Serve(0); }
+            void Serve(int i)
+            {
+                if (stop) return;
+                NamedPipeServerStream p;
+                try { p = new NamedPipeServerStream(id + "_" + (i % wrap).ToString("000") + "." + ext, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 1 << 20, 0); }
+                catch { return; }
+                lock (gate) waiting = p;
+                p.BeginWaitForConnection(ar =>
+                {
+                    try { p.EndWaitForConnection(ar); } catch { try { p.Dispose(); } catch { } return; }
+                    Serve(i + 1);   // the next piece's pipe is ready long before FFmpeg needs it
+                    new Thread(() => Read(p, i % wrap)) { IsBackground = true, Priority = ThreadPriority.AboveNormal, Name = "clips ram" }.Start();
+                }, null);
+            }
+            void Read(NamedPipeServerStream p, int slot)
+            {
+                var ms = new MemoryStream(); var buf = new byte[1 << 16];
+                lock (gate) current = ms;
+                try { int n; while ((n = p.Read(buf, 0, buf.Length)) > 0) lock (gate) ms.Write(buf, 0, n); } catch { }
+                finally { try { p.Dispose(); } catch { } }
+                lock (gate) { if (ms.Length > 0) done[slot] = Tuple.Create(ms.ToArray(), DateTime.Now); if (current == ms) current = null; }
+            }
+            public void Stop() { stop = true; lock (gate) { if (waiting != null) try { waiting.Dispose(); } catch { } } }
+            public long Bytes { get { lock (gate) return done.Values.Sum(d => (long)d.Item1.Length) + (current != null ? current.Length : 0); } }
+            // the pieces that ended after `since`, oldest first, plus the one being written
+            public List<Tuple<byte[], DateTime>> Since(DateTime since)
+            {
+                lock (gate)
+                {
+                    var r = done.Values.Where(d => d.Item2 >= since).OrderBy(d => d.Item2).ToList();
+                    if (current != null && current.Length > 0) r.Add(Tuple.Create(current.ToArray(), DateTime.Now));
+                    return r;
+                }
+            }
+        }
 
         // v1.9: the oldest process of that name whose parent isn't the same app (Discord runs several; its sound comes from a child)
         public static int RootPid(string exe)

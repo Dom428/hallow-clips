@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.10", new[] { "Webcam in a corner of your clips and sessions (Settings > Webcam, pick the corner and size)", "Keep the replay in memory instead of on disk to spare your SSD (Settings)", "Settings fold away behind the Settings button, so your clips get the room" }),
             Tuple.Create("1.9", new[] { "Own sound tracks: the game and Discord (or Spotify, your browser, TeamSpeak) each get their own track, next to everything + your mic", "Sound in exports: pick what goes into Discord copies, phone versions and highlight reels - e.g. game only, without Discord or your mic" }),
             Tuple.Create("1.8", new[] { "Updates itself: Check for updates in settings, or the Update button when a new version is out (asks first)", "Ctrl+Alt+P takes a screenshot; Ctrl+Alt+B marks a moment - markers become chapters and show up in Trim" }),
             Tuple.Create("1.7", new[] { "Highlight reel: tick clips, put them in order and join them into one video - with crossfades and a title card if you like", "Clip titles and your own thumbnail picture (the ... button)", "Export a GIF, or a 9:16 phone version for TikTok, Shorts and Reels" }),

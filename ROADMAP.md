@@ -14,12 +14,9 @@
 | **1.7** | Highlight reel (copy or one GPU re-encode, crossfades, title card), clip titles and thumbnail picker, GIF and 9:16 phone exports |
 | **1.8** | Updates itself from GitHub (asks first, SHA-256, never FFmpeg), Ctrl+Alt+P screenshots, Ctrl+Alt+B markers as chapters |
 | **1.9** | Game, Discord and other picked apps on their own sound tracks (per-process loopback, Windows 10 2004+), sound tracks chosen for exports |
+| **1.10** | Webcam overlay (corner, size), replay buffer in memory (spares the SSD), settings behind a Settings button |
 
 ## Next
-### 1.10 - Webcam and memory buffer
-- Optional webcam overlay (corner and size)
-- Replay buffer in memory instead of on disk (optional), to spare the SSD
-
 ### Gaps vs ShadowPlay / Medal
 What NVIDIA ShadowPlay (NVIDIA app), Medal.tv, Outplayed and OBS's replay buffer do that Clips didn't (as of 1.7):
 - Updates itself (NVIDIA app, Medal, Outplayed, OBS) - **buildable**: GitHub releases with checksums, like Hallow Hub (1.8)
