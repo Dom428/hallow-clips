@@ -12,3 +12,15 @@
 | **1.5** | One Hallow icon: open / menu / invoke / quit for Hallow Hub's tray menu, Use the Hallow icon (own icon hidden while Hub hosts), balloons through Hub |
 
 ## Next
+
+### 1.6 - Hallow accent and crash reports
+- Use the Hallow accent: the colour picked in Hallow Toolkit (theme.json) replaces Clips' orange, live (on by default)
+- Crash reports kept on this PC (crashes folder, newest 20), a notice on the next start, lastCrash in status; FFmpeg never left running
+
+### 1.7 - Highlight reel, titles and exports
+- Highlight reel: pick and order clips, join them into one MP4 (copy when formats match, else one GPU re-encode), optional crossfade and title card
+- Clip titles (MP4 title metadata, shown in the list, in status.json) and pick the thumbnail frame
+- Export a GIF (palette, length cap, width choices) or a 9:16 phone version under ~50 MB
+
+## Later
+- Auto clips from game events - only a few games (CS2, Dota 2) expose them, and none of the games played here do
