@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.3
+- Record session (Ctrl+Alt+R): records everything until you stop, next to the instant replay.
+- Video format: HEVC or AV1 for smaller files, offered when your graphics card can.
+- Space limit for the clips folder (off unless you pick one): the oldest clips that aren't favourites go to the Recycle Bin.
+
 WHAT'S NEW IN 1.2
 - Trim a clip (scissors): no re-encoding, so it's instant and keeps full quality. The original stays.
 - Copy for Discord: a copy under 10 MB on the clipboard - paste it into Discord with Ctrl+V.
@@ -24,10 +29,14 @@ HOW IT WORKS
 - Your game sound and your mic are on separate tracks (turn the mic off in the app).
 - Recording runs on your graphics card (NVIDIA, AMD or Intel), so games barely notice.
 - 15 s to 2 min clips, 30 or 60 fps, three quality levels, pick your screen.
+- Ctrl+Alt+R (or Record session) records everything until you press it again - saved as an MP4 in the same folder.
+- Video format: H.264 plays everywhere; HEVC and AV1 make smaller files (only offered when your graphics card can).
+  Windows' own player needs the HEVC / AV1 Video Extension (Microsoft Store) for those.
 
 GOOD TO KNOW
 - The buffer only exists on your PC and is overwritten constantly; nothing is uploaded anywhere.
-- Deleting a clip in the app sends it to the Recycle Bin.
+- Deleting a clip in the app sends it to the Recycle Bin. The space limit (off unless you pick one) does the same with
+  the oldest clips that aren't favourites when the folder grows past it.
 - Trim keeps the original and saves a trimmed copy next to it. Discord copies are kept for 2 days in
   %LOCALAPPDATA%\HallowClips\discord.
 

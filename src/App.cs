@@ -27,14 +27,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.2";
+        public const string Version = "1.3";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -104,7 +104,7 @@ namespace HallowClips
         public MainWindow(bool hidden)
         {
             startHidden = hidden; rec = new Recorder(S);
-            Title = "Hallow Clips"; Width = 820; Height = 760; MinWidth = 700; MinHeight = 560;
+            Title = "Hallow Clips"; Width = 820; Height = 820; MinWidth = 700; MinHeight = 560;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             try { Icon = AppIcon(); } catch { }
@@ -124,13 +124,22 @@ namespace HallowClips
             SetupTray();
             var hwnd = new WindowInteropHelper(this).EnsureHandle();
             hotkeyOk = RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
-            HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) => { if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null); handled = true; } return IntPtr.Zero; });
+            sessionKeyOk = RegisterHotKey(hwnd, 2, 0x4003, 0x52);   // v1.3: Ctrl+Alt+R starts / stops a session recording
+            HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) =>
+            {
+                if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null); handled = true; }
+                if (msg == 0x0312 && wp.ToInt32() == 2) { ToggleSession(); handled = true; }
+                return IntPtr.Zero;
+            });
             var poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             poll.Tick += (s, e) => { try { tracker.Poll(games.Concat(games.SelectMany(g => g.Alts)).ToList()); } catch { } Decide(); };
             poll.Start();
             var rescan = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) }; rescan.Tick += (s, e) => { try { games = Library.Scan(new List<Game>()); } catch { } }; rescan.Start();
             UpdateState(); FillClips();
             if (!hotkeyOk) Status("Ctrl+Alt+S is taken by another app - use the Save button or the tray menu, or close that app and restart Hallow Clips.");
+            else if (!sessionKeyOk) Status("Ctrl+Alt+R is taken by another app - use the Record session button instead.");
+            FindCodecs(); FinishLeftoverSessions();
+            Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
             Family.Serve("Clips", Command);
             // What's new: an update from 1.0 (which didn't remember versions) counts as seen 1.0 when FFmpeg was already set up
             if (string.IsNullOrEmpty(S.LastSeenVersion)) { S.LastSeenVersion = S.Ffmpeg != null ? "1.0" : Program.Version; S.Save(); }
@@ -138,7 +147,7 @@ namespace HallowClips
             if (!startHidden) Show();
             Dispatcher.BeginInvoke(new Action(Decide), DispatcherPriority.ApplicationIdle);
         }
-        bool hotkeyOk;
+        bool hotkeyOk, sessionKeyOk;
         void ShowWhatsNew()
         {
             if (S.LastSeenVersion == Program.Version || !IsVisible || Snap.On) return;
@@ -260,8 +269,12 @@ namespace HallowClips
             title.Children.Add(new TextBlock { Text = "HALLOW", FontSize = 22, FontWeight = FontWeights.Bold, Foreground = B("#F07820"), VerticalAlignment = VerticalAlignment.Center });
             title.Children.Add(new TextBlock { Text = " CLIPS", FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(title, Dock.Left); head.Children.Add(title);
-            var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), HorizontalAlignment = HorizontalAlignment.Right, ToolTip = "Same as Ctrl+Alt+S" };
-            saveNow.Click += (s, e) => SaveClip(null); head.Children.Add(saveNow);
+            var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), ToolTip = "Same as Ctrl+Alt+S" };
+            saveNow.Click += (s, e) => SaveClip(null);
+            sessionBtn = new Button { Content = "Record session", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Record everything from now until you stop (Ctrl+Alt+R)" };
+            sessionBtn.Click += (s, e) => ToggleSession();
+            var hb = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+            hb.Children.Add(sessionBtn); hb.Children.Add(saveNow); head.Children.Add(hb);
             root.Children.Add(head);
             // status card
             var card = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
@@ -282,7 +295,8 @@ namespace HallowClips
             card.Child = cs; root.Children.Add(card);
             // settings
             var set = new StackPanel { Margin = new Thickness(0, 0, 0, 10) }; DockPanel.SetDock(set, Dock.Top);
-            Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, FrameworkElement> chips = (label, opts, get, setv) =>
+            Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, FrameworkElement> chips = null;
+            Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, bool, FrameworkElement> chipRow = (label, opts, get, setv, restart) =>
             {
                 var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
                 var l = new TextBlock { Text = label, Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold }; DockPanel.SetDock(l, Dock.Left); row.Children.Add(l);
@@ -290,16 +304,33 @@ namespace HallowClips
                 foreach (var o in opts)
                 {
                     var key = o.Item1; var c = new ToggleButton { Content = o.Item2, Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 6, 0), IsChecked = get() == key, Padding = new Thickness(12, 5, 12, 5) };
-                    c.Click += (s, e) => { setv(key); S.Save(); foreach (ToggleButton x in wp.Children) x.IsChecked = x == c; Restart(); };
+                    c.Click += (s, e) => { setv(key); S.Save(); foreach (ToggleButton x in wp.Children) x.IsChecked = x == c; if (restart) Restart(); };
                     wp.Children.Add(c);
                 }
                 row.Children.Add(wp); return row;
             };
+            chips = (label, opts, get, setv) => chipRow(label, opts, get, setv, true);
             set.Children.Add(chips("Clip length", new[] { "15", "30", "60", "120" }.Select(x => Tuple.Create(x, x == "120" ? "2 min" : x + " s")), () => S.Seconds.ToString(), v => S.Seconds = int.Parse(v)));
             set.Children.Add(chips("Quality", new[] { Tuple.Create("medium", "Smaller files"), Tuple.Create("high", "High"), Tuple.Create("max", "Best") }, () => S.Quality, v => S.Quality = v));
             set.Children.Add(chips("Frame rate", new[] { Tuple.Create("30", "30 fps"), Tuple.Create("60", "60 fps") }, () => S.Fps.ToString(), v => S.Fps = int.Parse(v)));
             var screens = WF.Screen.AllScreens.Length;
             if (screens > 1) set.Children.Add(chips("Screen", Enumerable.Range(0, screens).Select(i => Tuple.Create(i.ToString(), "Screen " + (i + 1))), () => S.Screen.ToString(), v => S.Screen = int.Parse(v)));
+            // v1.3: video format - only what this PC can record (found with a one-frame test encode, see FindCodecs)
+            codecRow = new ContentControl(); set.Children.Add(codecRow);
+            FillCodecRow = () =>
+            {
+                var have = new List<string> { "h264" }; if (S.Codecs != null) have.AddRange(S.Codecs.Where(c => c == "hevc" || c == "av1"));
+                if (have.Count < 2) { codecRow.Content = null; return; }
+                var names = new Dictionary<string, string> { { "h264", "H.264 (plays everywhere)" }, { "hevc", "HEVC (smaller)" }, { "av1", "AV1 (smallest)" } };
+                codecRow.Content = chips("Video format", have.Select(c => Tuple.Create(c, names[c])), () => have.Contains(S.Codec) ? S.Codec : "h264", v => S.Codec = v);
+                codecRow.ToolTip = "HEVC and AV1 make smaller files at the same quality. Windows needs the HEVC / AV1 Video Extension to play them in its own player; Discord copies are always H.264.";
+            };
+            FillCodecRow();
+            // v1.3: space limit for the clips folder (off by default)
+            var limit = chipRow("Space limit", new[] { Tuple.Create("0", "Off"), Tuple.Create("10", "10 GB"), Tuple.Create("25", "25 GB"), Tuple.Create("50", "50 GB"), Tuple.Create("100", "100 GB") },
+                () => S.SpaceLimitGB.ToString(), v => { S.SpaceLimitGB = int.Parse(v); Dispatcher.BeginInvoke(new Action(EnforceLimit)); }, false);
+            ((FrameworkElement)limit).ToolTip = "When the clips folder grows past this, the oldest clips that aren't favourites go to the Recycle Bin.";
+            set.Children.Add(limit);
             Action<string, bool, Action<bool>> sw = (text, on, setv) =>
             {
                 var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
@@ -424,6 +455,128 @@ namespace HallowClips
             }
         }
 
+        // ---- v1.3: record a whole session (start / stop) - its own recorder next to the replay buffer, straight to a file
+        Recorder session; Button sessionBtn; WF.ToolStripMenuItem traySession; DispatcherTimer sessionTick; bool finishing;
+        void ToggleSession()
+        {
+            if (finishing) return;
+            if (session != null) { StopSession(); return; }
+            if (S.Ffmpeg == null) { toast.Flash("Hallow Clips isn't set up yet"); return; }
+            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name);
+            if (!r.Start()) { toast.Flash("Couldn't start recording"); Status(r.Error); return; }
+            session = r;
+            toast.Flash("Recording the whole session - Ctrl+Alt+R stops");
+            Status("Recording a session to " + Path.GetFileName(r.SessionFile) + ".");
+            if (sessionTick == null) { sessionTick = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) }; sessionTick.Tick += (s, e) => SessionState(); }
+            sessionTick.Start(); SessionState();
+        }
+        void SessionState()
+        {
+            if (session != null && !session.Running && !finishing) { Status("The session recording stopped by itself (" + Family.OneLine(session.LastLog.Split('\n').LastOrDefault(l => l.Trim().Length > 0)) + ")."); StopSession(); return; }
+            var len = session == null ? "" : TimeSpan.FromSeconds((int)(DateTime.Now - session.Started).TotalSeconds).ToString(@"h\:mm\:ss");
+            sessionBtn.Content = finishing ? "Finishing..." : session != null ? "Stop recording " + len : "Record session";
+            sessionBtn.IsEnabled = !finishing;
+            sessionBtn.Foreground = session != null ? B("#FF6B73") : (Brush)FindResource("Text");
+            if (traySession != null) traySession.Text = session != null ? "Stop recording (" + len + ")   (Ctrl+Alt+R)" : "Record session   (Ctrl+Alt+R)";
+        }
+        void StopSession()
+        {
+            var r = session; session = null; if (r == null) return;
+            if (sessionTick != null) sessionTick.Stop();
+            finishing = true; SessionState(); var ff = S.Ffmpeg; var mins = (DateTime.Now - r.Started).TotalMinutes;
+            new Thread(() =>
+            {
+                r.Stop();
+                string err; var f = Recorder.FinishSession(ff, Path.ChangeExtension(r.SessionFile, ".mkv"), out err);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    finishing = false; SessionState();
+                    if (f != null) { toast.Flash("Session saved - " + (mins < 1 ? (int)(mins * 60) + " s" : (int)mins + " min")); Status("Saved " + Path.GetFileName(f)); }
+                    else { toast.Flash("Session recording kept as .mkv"); Status(err); }
+                    FillClips(); EnforceLimit();
+                }));
+            }) { IsBackground = true }.Start();
+        }
+        // a session left as .mkv (the app was closed while recording) becomes an MP4 now
+        void FinishLeftoverSessions()
+        {
+            var ff = S.Ffmpeg; var folder = S.ClipsFolder; if (ff == null || !Directory.Exists(folder)) return;
+            new Thread(() =>
+            {
+                bool any = false;
+                try
+                {
+                    foreach (var mkv in Directory.GetFiles(folder, "* session.mkv", SearchOption.AllDirectories))
+                    {
+                        if (File.Exists(Path.ChangeExtension(mkv, ".mp4"))) continue;
+                        try { using (File.Open(mkv, FileMode.Open, FileAccess.Read, FileShare.None)) { } } catch { continue; }   // still being written
+                        string err; if (Recorder.FinishSession(ff, mkv, out err) != null) any = true;
+                    }
+                }
+                catch { }
+                if (any) Dispatcher.BeginInvoke(new Action(FillClips));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+
+        // ---- v1.3: which video formats this PC can record (one-frame test encodes; remembered until FFmpeg or the graphics card changes)
+        ContentControl codecRow; Action FillCodecRow;
+        void FindCodecs()
+        {
+            var ff = S.Ffmpeg; if (ff == null) return;
+            new Thread(() =>
+            {
+                string key; try { key = ff + "|" + new FileInfo(ff).Length + "|" + Recorder.Encoder(ff); } catch { return; }
+                if (key == S.CodecsFor && S.Codecs != null) return;
+                var ok = new List<string>(); foreach (var c in new[] { "hevc", "av1" }) if (Recorder.CanEncode(ff, c)) ok.Add(c);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    S.Codecs = ok; S.CodecsFor = key;
+                    if (S.Codec != "h264" && !ok.Contains(S.Codec)) { S.Codec = "h264"; Restart(); }   // e.g. a new graphics card
+                    S.Save(); FillCodecRow();
+                }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+
+        // ---- v1.3: space limit - over the limit, the oldest clips that aren't favourites go to the Recycle Bin
+        bool enforcing;
+        void EnforceLimit()
+        {
+            if (S.SpaceLimitGB <= 0 || enforcing || Snap.On) return;
+            enforcing = true; long limit = S.SpaceLimitGB * 1000L * 1000 * 1000; var folder = S.ClipsFolder;
+            var keep = new HashSet<string>(S.Favorites ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            var recording = session != null ? Path.ChangeExtension(session.SessionFile, ".mkv") : null;
+            new Thread(() =>
+            {
+                int n = 0; long freed = 0; string err = null;
+                try
+                {
+                    if (Directory.Exists(folder))
+                    {
+                        var files = new DirectoryInfo(folder).GetFiles("*.*", SearchOption.AllDirectories).Where(f => f.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase) || f.Extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)).ToList();
+                        long total = files.Sum(f => f.Length);
+                        foreach (var f in files.OrderBy(f => f.LastWriteTime))
+                        {
+                            if (total <= limit) break;
+                            if (keep.Contains(f.FullName) || string.Equals(f.FullName, recording, StringComparison.OrdinalIgnoreCase) || f.LastWriteTime > DateTime.Now.AddMinutes(-2)) continue;   // favourites, the recording, brand-new files
+                            try
+                            {
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(f.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                                total -= f.Length; freed += f.Length; n++;
+                                try { File.Delete(ThumbPath(f.FullName)); } catch { }
+                            }
+                            catch (Exception ex) { err = ex.Message; }
+                        }
+                    }
+                }
+                catch (Exception ex) { err = ex.Message; }
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    enforcing = false;
+                    if (n > 0) { Status("Space limit " + S.SpaceLimitGB + " GB: moved " + n + " old clip" + (n == 1 ? "" : "s") + " (" + (freed / 1e9).ToString("0.0") + " GB) to the Recycle Bin."); FillClips(); }
+                    else if (err != null) Status("Space limit: " + err);
+                }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
         // ---- v1.2: trim, Copy for Discord, rename (FFmpeg runs in the background; the list shows what's happening)
         readonly HashSet<string> busy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Work(string clip, string doing, Func<string> job, Action<string> done)
@@ -519,17 +672,24 @@ namespace HallowClips
             var menu = new WF.ContextMenuStrip();
             var open = new WF.ToolStripMenuItem("Open Hallow Clips"); open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold); open.Click += (s, e) => ShowFromTray(); menu.Items.Add(open);
             var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => SaveClip(null))); menu.Items.Add(save);
+            traySession = new WF.ToolStripMenuItem("Record session   (Ctrl+Alt+R)"); traySession.Click += (s, e) => Dispatcher.BeginInvoke(new Action(ToggleSession)); menu.Items.Add(traySession);
             menu.Items.Add(new WF.ToolStripSeparator());
             var quit = new WF.ToolStripMenuItem("Quit"); quit.Click += (s, e) => Quit(); menu.Items.Add(quit);
             tray.ContextMenuStrip = menu;
             tray.MouseClick += (s, e) => { if (e.Button == WF.MouseButtons.Left) ShowFromTray(); };
         }
         public void ShowFromTray() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); FillClips(); UpdateState(); }
-        void Quit() { exiting = true; rec.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } Application.Current.Shutdown(); }
+        void Quit()
+        {
+            exiting = true; rec.Stop();
+            if (session != null) session.Stop();   // a session in progress is kept as .mkv and becomes an MP4 on the next start
+            if (tray != null) { tray.Visible = false; tray.Dispose(); }
+            Application.Current.Shutdown();
+        }
 
         public void SnapAll(string dir)
         {
-            Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 760);
+            Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 820);
             Snap.Save(new WhatsNewWindow(WhatsNew.Notes.ToList()), System.IO.Path.Combine(dir, "whatsnew.png"), 560, 0);
             var clip = RecentClips(1).FirstOrDefault();
             if (clip != null)

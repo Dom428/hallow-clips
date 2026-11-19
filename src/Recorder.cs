@@ -29,7 +29,11 @@ namespace HallowClips
         [DataMember] public string FfmpegPath = "";
         [DataMember] public string LastSeenVersion = "";   // v1.1: for What's new
         [DataMember] public List<string> Favorites = new List<string>();   // v1.2: full paths of clips you starred
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); }
+        [DataMember] public string Codec = "h264";       // v1.3: h264, hevc, av1
+        [DataMember] public int SpaceLimitGB = 0;        // v1.3: 0 = no limit
+        [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
+        [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -63,6 +67,31 @@ namespace HallowClips
         public string BufferDir { get { return Path.Combine(ClipSettings.Dir, "buffer"); } }
         public bool Running { get { try { return ff != null && !ff.HasExited; } catch { return false; } } }
         public Recorder(ClipSettings s) { S = s; }
+        // v1.3: a whole-session recording goes straight to this file (Matroska while recording, so it survives a crash;
+        // made into an MP4 when it stops). null = the replay buffer.
+        public string SessionFile;
+        public string Codec = "h264"; string segExt = "ts";   // what the current recording uses
+
+        // v1.3: the video formats this PC can record: h264 always, hevc / av1 when FFmpeg and the graphics card can encode them
+        // (found with a one-frame test encode with the same settings a recording uses)
+        public static string EncoderFor(string family, string codec) { return codec + "_" + family; }
+        public static string GpuFamily(string ffmpeg) { var e = Encoder(ffmpeg); return e.Substring(e.IndexOf('_') + 1); }
+        public static string VideoArgs(string family, string codec, int q)
+        {
+            var e = EncoderFor(family, codec);
+            if (codec == "av1") q += 6;   // AV1's quality scale is finer (0-63)
+            return family == "nvenc" ? "-c:v " + e + " -preset p4 -tune hq -rc vbr -cq " + q + " -b:v 0 -maxrate 60M -bufsize 60M"
+                 : family == "amf" ? "-c:v " + e + " -quality balanced -rc cqp -qp_i " + q + " -qp_p " + (q + 2)
+                 : family == "qsv" ? "-c:v " + e + " -global_quality " + q
+                 : "-c:v " + e + " -b:v " + (codec == "h264" ? "20M" : "14M");
+        }
+        public static bool CanEncode(string ffmpeg, string codec)
+        {
+            var fam = GpuFamily(ffmpeg);
+            var args = "-hide_banner -loglevel error -f lavfi -i color=black:s=1280x720:r=30 -frames:v 1 " + (fam == "mf" ? "-pix_fmt nv12 " : "") + VideoArgs(fam, codec, 23) + " -f null -";
+            string err; int exit; ClipOps.Run(ffmpeg, args, 20000, out err, out exit);
+            return exit == 0;
+        }
         readonly StringBuilder log = new StringBuilder();
         public string LastLog { get { lock (log) return log.ToString(); } }
 
@@ -83,18 +112,21 @@ namespace HallowClips
         {
             Stop(); Error = null;
             var exe = S.Ffmpeg; if (exe == null) { Error = "FFmpeg isn't set up yet."; return false; }
-            Directory.CreateDirectory(BufferDir);
-            KillLeftovers(exe, BufferDir);
-            foreach (var f in Directory.GetFiles(BufferDir, "seg*.ts")) try { File.Delete(f); } catch { }
+            Codec = S.Codec == "hevc" || S.Codec == "av1" ? S.Codec : "h264";
+            segExt = Codec == "av1" ? "mkv" : "ts";   // MPEG-TS can't carry AV1
+            if (SessionFile == null)
+            {
+                Directory.CreateDirectory(BufferDir);
+                KillLeftovers(exe, BufferDir);
+                foreach (var f in Directory.GetFiles(BufferDir, "seg*.*")) try { File.Delete(f); } catch { }
+            }
+            else Directory.CreateDirectory(Path.GetDirectoryName(SessionFile));
             sys = new AudioPipe(true); if (!sys.Open()) { Error = "Game sound: " + sys.Error; sys = null; }
             mic = null; if (S.Mic) { mic = new AudioPipe(false); if (!mic.Open()) mic = null; }
             int seg = 2, wrap = S.Seconds / seg + 6;
-            var enc = Encoder(exe);
+            var fam = GpuFamily(exe);
             var q = S.Quality == "max" ? 18 : S.Quality == "medium" ? 28 : 23;
-            var v = enc == "h264_nvenc" ? "-c:v h264_nvenc -preset p4 -tune hq -rc vbr -cq " + q + " -b:v 0 -maxrate 60M -bufsize 60M"
-                  : enc == "h264_amf" ? "-c:v h264_amf -quality balanced -rc cqp -qp_i " + q + " -qp_p " + (q + 2)
-                  : enc == "h264_qsv" ? "-c:v h264_qsv -global_quality " + q
-                  : "-vf hwdownload,format=bgra -c:v h264_mf -b:v 20M";
+            var v = (fam == "mf" ? "-vf hwdownload,format=bgra " : "") + VideoArgs(fam, Codec, q);
             var a = new StringBuilder();
             a.Append("-hide_banner -loglevel info -nostats -y ");   // info: "Press [q]" tells us when recording really starts
             a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
@@ -110,7 +142,8 @@ namespace HallowClips
             a.AppendFormat(CultureInfo.InvariantCulture, "-g {0} -force_key_frames \"expr:gte(t,n_forced*{1})\" ", S.Fps * seg, seg);
             if (idx > 1) a.Append("-c:a aac -b:a 160k -ac 2 -ar 48000 ");
             if (sys != null && mic != null) a.Append("-metadata:s:a:0 title=\"Game and chat\" -metadata:s:a:1 title=\"Your mic\" ");
-            a.AppendFormat(CultureInfo.InvariantCulture, "-f segment -segment_time {0} -segment_format mpegts -segment_wrap {1} -reset_timestamps 1 \"{2}\"", seg, wrap, Path.Combine(BufferDir, "seg%03d.ts"));
+            if (SessionFile != null) a.Append("-f matroska \"" + Path.ChangeExtension(SessionFile, ".mkv") + "\"");
+            else a.AppendFormat(CultureInfo.InvariantCulture, "-f segment -segment_time {0} -segment_format {1} -segment_wrap {2} -reset_timestamps 1 \"{3}\"", seg, segExt == "ts" ? "mpegts" : "matroska", wrap, Path.Combine(BufferDir, "seg%03d." + segExt));
             try
             {
                 ff = new Process { StartInfo = new ProcessStartInfo(exe, a.ToString()) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardInput = true } };
@@ -138,7 +171,7 @@ namespace HallowClips
         {
             if (ff != null)
             {
-                try { if (!ff.HasExited) { ff.StandardInput.Write("q"); ff.StandardInput.Flush(); if (!ff.WaitForExit(3000)) ff.Kill(); } } catch { try { ff.Kill(); } catch { } }
+                try { if (!ff.HasExited) { ff.StandardInput.Write("q"); ff.StandardInput.Flush(); if (!ff.WaitForExit(SessionFile != null ? 15000 : 3000)) ff.Kill(); } } catch { try { ff.Kill(); } catch { } }
                 ff = null;
             }
             if (logTimer != null) { logTimer.Dispose(); logTimer = null; }
@@ -159,7 +192,7 @@ namespace HallowClips
                 foreach (var p in new[] { sys, mic })
                     if (p != null) sb.AppendLine((p.Loopback ? "Game sound" : "Mic") + ": " + p.Rate + " Hz, " + p.Channels + " ch; from Windows " + p.FramesIn + " frames, silence added " + p.FramesPadded + ", trimmed " + p.FramesDropped + ", glitches " + p.Glitches + "; recording started " + p.StartupMs + " ms after the pipe opened");
                 sb.AppendLine(); sb.Append(LastLog);
-                File.WriteAllText(Path.Combine(ClipSettings.Dir, "recorder.log"), sb.ToString());
+                File.WriteAllText(Path.Combine(ClipSettings.Dir, SessionFile != null ? "session.log" : "recorder.log"), sb.ToString());
             }
             catch { }
         }
@@ -169,7 +202,7 @@ namespace HallowClips
         {
             error = null;
             var since = DateTime.Now.AddSeconds(-seconds - 1);
-            var segs = Directory.GetFiles(BufferDir, "seg*.ts").Select(f => new FileInfo(f)).Where(f => f.Length > 0 && f.LastWriteTime >= since).OrderBy(f => f.LastWriteTime).ToList();
+            var segs = Directory.GetFiles(BufferDir, "seg*." + segExt).Select(f => new FileInfo(f)).Where(f => f.Length > 0 && f.LastWriteTime >= since).OrderBy(f => f.LastWriteTime).ToList();
             if (segs.Count == 0) { error = "Nothing recorded yet."; return null; }
             var dir = Path.Combine(S.ClipsFolder, Safe(name)); Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, Safe(name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".mp4");
@@ -178,9 +211,9 @@ namespace HallowClips
             try
             {
                 var list = new StringBuilder();
-                for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + ".ts"); try { File.Copy(segs[i].FullName, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
+                for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { File.Copy(segs[i].FullName, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
                 var lf = Path.Combine(tmp, "list.txt"); File.WriteAllText(lf, list.ToString());
-                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" -map 0 -c copy -movflags +faststart \"" + file + "\"")
+                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" -map 0 -c copy " + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")
                     { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true });
                 var err = p.StandardError.ReadToEnd(); p.WaitForExit(30000);
                 if (!File.Exists(file) || new FileInfo(file).Length == 0) { error = "Saving failed: " + err.Trim(); return null; }
@@ -188,6 +221,21 @@ namespace HallowClips
             }
             finally { try { Directory.Delete(tmp, true); } catch { } }
         }
+        // v1.3: a finished session recording (.mkv) becomes an MP4 next to it (no re-encoding). Also used for one left over
+        // from a crash or a hard close. Returns the MP4, or null (the .mkv then stays, it plays too).
+        public static string FinishSession(string ffmpeg, string mkv, out string error)
+        {
+            error = null; var mp4 = Path.ChangeExtension(mkv, ".mp4");
+            if (!File.Exists(mkv) || new FileInfo(mkv).Length == 0) { try { File.Delete(mkv); } catch { } error = "Nothing was recorded."; return null; }
+            var info = ClipOps.Inspect(ffmpeg, mkv);
+            string err; int exit;
+            ClipOps.Run(ffmpeg, "-hide_banner -loglevel error -y -i \"" + mkv + "\" -map 0 -c copy " + (info.Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + mp4 + "\"", 3600000, out err, out exit);
+            if (exit != 0 || !File.Exists(mp4) || new FileInfo(mp4).Length == 0) { try { File.Delete(mp4); } catch { } error = "Couldn't make the MP4 (" + Family.OneLine(err) + ") - the recording is kept as " + Path.GetFileName(mkv) + "."; return null; }
+            try { File.Delete(mkv); } catch { }
+            return mp4;
+        }
+        public string SessionName(string game) { var g = Safe(game); return Path.Combine(S.ClipsFolder, g, g + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + " session.mp4"); }
+
         // v1.1: an FFmpeg left over from a copy of Hallow Clips that was closed hard (older versions, an update) still writes to
         // our folder - stop it before starting our own. Only FFmpeg runs of Hallow Clips' own FFmpeg that mention that folder.
         public static void KillLeftovers(string exe, string folder)
