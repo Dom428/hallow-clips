@@ -1,0 +1,377 @@
+﻿// Hallow Clips - instant replay: keeps the last moments of your game in a rolling buffer, and Ctrl+Alt+S saves them as an MP4.
+// Your game sound and your mic go on separate tracks. Uses FFmpeg (downloaded once, checked against GitHub's checksum).
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Net;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Threading;
+using System.Web.Script.Serialization;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Windows.Markup;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using WF = System.Windows.Forms;
+
+[assembly: AssemblyTitle("Hallow Clips")]
+[assembly: AssemblyProduct("Hallow Clips")]
+[assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
+
+namespace HallowClips
+{
+    public static class Program
+    {
+        public const string Version = "1.0";
+        [STAThread]
+        public static void Main(string[] args)
+        {
+            int si = Array.IndexOf(args, "--snap");
+            if (si >= 0 && si + 1 < args.Length)
+            {
+                Snap.On = true; ClipSettings.Frozen = true;
+                var sa = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; LoadTheme(sa);
+                new MainWindow(true).SnapAll(args[si + 1]); return;
+            }
+            bool created;
+            var mutex = new Mutex(true, @"Local\HallowClips", out created);
+            var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\HallowClipsShow");
+            if (!created) { showEvent.Set(); return; }
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; LoadTheme(app);
+            var w = new MainWindow(args.Contains("--tray"));
+            new Thread(() => { while (showEvent.WaitOne()) w.Dispatcher.BeginInvoke(new Action(w.ShowFromTray)); }) { IsBackground = true }.Start();
+            app.Run();
+            GC.KeepAlive(mutex);
+        }
+        static void LoadTheme(Application app)
+        {
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("HallowClips.Theme.xaml"))
+                app.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(s));
+        }
+    }
+
+    // "Clip saved" pop-up: click-through, never takes focus from the game
+    public class Toast : Window
+    {
+        [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+        [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
+        readonly TextBlock text = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+        readonly DispatcherTimer hide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        public Toast()
+        {
+            WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; ShowInTaskbar = false; ShowActivated = false; SizeToContent = SizeToContent.WidthAndHeight; FontFamily = new FontFamily("Segoe UI");
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            var ic = Icons.Make("circle-play", 16, new SolidColorBrush(Color.FromRgb(0xF0, 0x78, 0x20))); ic.Margin = new Thickness(0, 0, 10, 0); sp.Children.Add(ic); sp.Children.Add(text);
+            Content = new Border { Background = new SolidColorBrush(Color.FromArgb(235, 0x1C, 0x17, 0x24)), BorderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0x78, 0x20)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 10, 18, 10), Child = sp };
+            hide.Tick += (s, e) => { hide.Stop(); Hide(); };
+            SourceInitialized += (s, e) => { var h = new WindowInteropHelper(this).Handle; SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x20 | 0x80 | 0x08000000); };
+        }
+        public void Flash(string msg)
+        {
+            text.Text = msg; if (!IsVisible) Show(); UpdateLayout();
+            Left = SystemParameters.PrimaryScreenWidth - ActualWidth - 20; Top = 20; hide.Stop(); hide.Start();
+        }
+    }
+
+    public class MainWindow : Window
+    {
+        [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
+        [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+        static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+
+        readonly ClipSettings S = ClipSettings.Load();
+        readonly Recorder rec;
+        readonly Tracker tracker = new Tracker();
+        List<Game> games = new List<Game>();
+        readonly Toast toast = new Toast();
+        readonly bool startHidden; bool exiting, toldTray, saving;
+        TextBlock state, ffState; Border dot; StackPanel clipsList; Button setupBtn; WF.NotifyIcon tray;
+
+        public MainWindow(bool hidden)
+        {
+            startHidden = hidden; rec = new Recorder(S);
+            Title = "Hallow Clips"; Width = 820; Height = 760; MinWidth = 700; MinHeight = 560;
+            Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            try { Icon = AppIcon(); } catch { }
+            Content = Build();
+            SourceInitialized += (s, e) => { int dark = 1; DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref dark, 4); };
+            Closing += (s, e) =>
+            {
+                if (!exiting && S.TrayOnClose && !Snap.On)
+                {
+                    e.Cancel = true; Hide();
+                    if (!toldTray && tray != null) { toldTray = true; tray.ShowBalloonTip(4000, "Hallow Clips", "Still running - Ctrl+Alt+S saves a clip while you play. Right-click the icon to quit.", WF.ToolTipIcon.None); }
+                }
+                else Quit();
+            };
+            if (Snap.On) { UpdateState(); FillClips(); return; }
+            try { games = Library.Scan(new List<Game>()); } catch { }
+            SetupTray();
+            var hwnd = new WindowInteropHelper(this).EnsureHandle();
+            RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
+            HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) => { if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(); handled = true; } return IntPtr.Zero; });
+            var poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+            poll.Tick += (s, e) => { try { tracker.Poll(games.Concat(games.SelectMany(g => g.Alts)).ToList()); } catch { } Decide(); };
+            poll.Start();
+            var rescan = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) }; rescan.Tick += (s, e) => { try { games = Library.Scan(new List<Game>()); } catch { } }; rescan.Start();
+            UpdateState(); FillClips();
+            if (!startHidden) Show();
+            Dispatcher.BeginInvoke(new Action(Decide), DispatcherPriority.ApplicationIdle);
+        }
+
+        static ImageSource AppIcon()
+        {
+            var ico = System.Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
+            return Imaging.CreateBitmapSourceFromHIcon(ico.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+        }
+        Tracker.Running Current { get { return tracker.Now.Values.OrderBy(r => r.Since).FirstOrDefault(); } }
+        string GameName { get { var c = Current; return c == null ? "Desktop" : (c.Game.Parent ?? c.Game).Name; } }
+
+        // record when it should (on, FFmpeg ready, and a game running unless "always")
+        void Decide()
+        {
+            bool want = S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null);
+            if (want && !rec.Running) { if (!rec.Start()) Status(rec.Error); }
+            else if (!want && rec.Running) rec.Stop();
+            UpdateState();
+        }
+
+        void SaveClip()
+        {
+            if (saving) return;
+            if (!rec.Running) { toast.Flash(S.Ffmpeg == null ? "Hallow Clips isn't set up yet" : "Not recording right now"); return; }
+            saving = true; var name = GameName; var secs = S.Seconds;
+            toast.Flash("Saving the last " + secs + " seconds...");
+            new Thread(() =>
+            {
+                string err; var f = rec.Save(secs, name, out err);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    saving = false;
+                    if (f != null) { toast.Flash("Clip saved - " + name + ", " + secs + " s"); Status("Saved " + Path.GetFileName(f)); FillClips(); }
+                    else { toast.Flash("Couldn't save the clip"); Status(err); }
+                }));
+            }) { IsBackground = true }.Start();
+        }
+
+        // ================================================================ window
+        TextBlock statusText;
+        void Status(string m) { if (statusText != null) statusText.Text = m; }
+
+        UIElement Build()
+        {
+            var root = new DockPanel { Margin = new Thickness(24, 14, 24, 14) };
+            var head = new DockPanel { Margin = new Thickness(0, 0, 0, 14) }; DockPanel.SetDock(head, Dock.Top);
+            var title = new StackPanel { Orientation = Orientation.Horizontal };
+            try { title.Children.Add(new Image { Source = AppIcon(), Width = 30, Height = 30, Margin = new Thickness(0, 0, 10, 0) }); } catch { }
+            title.Children.Add(new TextBlock { Text = "HALLOW", FontSize = 22, FontWeight = FontWeights.Bold, Foreground = B("#F07820"), VerticalAlignment = VerticalAlignment.Center });
+            title.Children.Add(new TextBlock { Text = " CLIPS", FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center });
+            DockPanel.SetDock(title, Dock.Left); head.Children.Add(title);
+            var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), HorizontalAlignment = HorizontalAlignment.Right, ToolTip = "Same as Ctrl+Alt+S" };
+            saveNow.Click += (s, e) => SaveClip(); head.Children.Add(saveNow);
+            root.Children.Add(head);
+            // status card
+            var card = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
+            DockPanel.SetDock(card, Dock.Top);
+            var cs = new StackPanel();
+            var sr = new StackPanel { Orientation = Orientation.Horizontal };
+            dot = new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            sr.Children.Add(dot);
+            state = new TextBlock { FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center }; sr.Children.Add(state);
+            cs.Children.Add(sr);
+            cs.Children.Add(new TextBlock { Text = "Press Ctrl+Alt+S in any game to save the last moments. Your game sound and your mic are on separate tracks.", Foreground = (Brush)FindResource("Muted"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(22, 4, 0, 0) });
+            var fr = new DockPanel { Margin = new Thickness(22, 10, 0, 0) };
+            setupBtn = new Button { Content = "Set up FFmpeg (171 MB)", Style = (Style)FindResource("Accent"), Margin = new Thickness(0, 0, 12, 0) };
+            setupBtn.Click += (s, e) => SetupFfmpeg();
+            DockPanel.SetDock(setupBtn, Dock.Left); fr.Children.Add(setupBtn);
+            ffState = new TextBlock { Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap }; fr.Children.Add(ffState);
+            cs.Children.Add(fr);
+            card.Child = cs; root.Children.Add(card);
+            // settings
+            var set = new StackPanel { Margin = new Thickness(0, 0, 0, 10) }; DockPanel.SetDock(set, Dock.Top);
+            Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, FrameworkElement> chips = (label, opts, get, setv) =>
+            {
+                var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+                var l = new TextBlock { Text = label, Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold }; DockPanel.SetDock(l, Dock.Left); row.Children.Add(l);
+                var wp = new WrapPanel();
+                foreach (var o in opts)
+                {
+                    var key = o.Item1; var c = new ToggleButton { Content = o.Item2, Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 6, 0), IsChecked = get() == key, Padding = new Thickness(12, 5, 12, 5) };
+                    c.Click += (s, e) => { setv(key); S.Save(); foreach (ToggleButton x in wp.Children) x.IsChecked = x == c; Restart(); };
+                    wp.Children.Add(c);
+                }
+                row.Children.Add(wp); return row;
+            };
+            set.Children.Add(chips("Clip length", new[] { "15", "30", "60", "120" }.Select(x => Tuple.Create(x, x == "120" ? "2 min" : x + " s")), () => S.Seconds.ToString(), v => S.Seconds = int.Parse(v)));
+            set.Children.Add(chips("Quality", new[] { Tuple.Create("medium", "Smaller files"), Tuple.Create("high", "High"), Tuple.Create("max", "Best") }, () => S.Quality, v => S.Quality = v));
+            set.Children.Add(chips("Frame rate", new[] { Tuple.Create("30", "30 fps"), Tuple.Create("60", "60 fps") }, () => S.Fps.ToString(), v => S.Fps = int.Parse(v)));
+            var screens = WF.Screen.AllScreens.Length;
+            if (screens > 1) set.Children.Add(chips("Screen", Enumerable.Range(0, screens).Select(i => Tuple.Create(i.ToString(), "Screen " + (i + 1))), () => S.Screen.ToString(), v => S.Screen = int.Parse(v)));
+            Action<string, bool, Action<bool>> sw = (text, on, setv) =>
+            {
+                var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
+                c.Click += (s, e) => { setv(c.IsChecked == true); S.Save(); Restart(); }; set.Children.Add(c);
+            };
+            sw("Instant replay on", S.On, v => S.On = v);
+            sw("Only while a game is running (otherwise it records your desktop too)", S.OnlyInGame, v => S.OnlyInGame = v);
+            sw("Record my mic on its own track", S.Mic, v => S.Mic = v);
+            sw("Keep running in the tray when I close this window", S.TrayOnClose, v => S.TrayOnClose = v);
+            sw("Start with Windows (in the tray)", StartsWithWindows(), v => SetStartWithWindows(v));
+            root.Children.Add(set);
+            // clips
+            var ch = new DockPanel { Margin = new Thickness(0, 6, 0, 8) }; DockPanel.SetDock(ch, Dock.Top);
+            var openF = new Button { Content = "Open clips folder", Style = (Style)FindResource("Btn") };
+            openF.Click += (s, e) => { Directory.CreateDirectory(S.ClipsFolder); Process.Start("explorer.exe", "\"" + S.ClipsFolder + "\""); };
+            DockPanel.SetDock(openF, Dock.Right); ch.Children.Add(openF);
+            ch.Children.Add(new TextBlock { Text = "YOUR CLIPS", FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = B("#A98BE0"), VerticalAlignment = VerticalAlignment.Center });
+            root.Children.Add(ch);
+            statusText = new TextBlock { Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, Margin = new Thickness(2, 8, 2, 0), TextTrimming = TextTrimming.CharacterEllipsis };
+            DockPanel.SetDock(statusText, Dock.Bottom); root.Children.Add(statusText);
+            clipsList = new StackPanel();
+            root.Children.Add(new ScrollViewer { Content = clipsList, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+            return root;
+        }
+
+        void Restart() { if (rec.Running) rec.Stop(); Decide(); }
+
+        void UpdateState()
+        {
+            var ok = S.Ffmpeg != null;
+            setupBtn.Visibility = ok ? Visibility.Collapsed : Visibility.Visible;
+            ffState.Text = ok ? "Records with FFmpeg on your graphics card - " + S.Seconds + " s clips at " + S.Fps + " fps. Clips go to " + S.ClipsFolder + "." :
+                "Hallow Clips records with FFmpeg (free). It downloads once from GitHub and is checked before use.";
+            bool on = rec.Running || (Snap.On && ok);
+            dot.Background = on ? B("#E0424C") : B("#5A5268");
+            state.Text = !ok ? "Not set up yet" : !S.On ? "Instant replay is off" : on ? "Recording " + (Current != null ? GameName : "your screen") + " - Ctrl+Alt+S saves the last " + S.Seconds + " s"
+                : S.OnlyInGame ? "Waiting for a game - it starts by itself" : "Starting...";
+            if (tray != null) tray.Text = rec.Running ? "Hallow Clips - recording (Ctrl+Alt+S)" : "Hallow Clips";
+        }
+
+        // ---- FFmpeg: the LGPL build from BtbN/FFmpeg-Builds on GitHub, checked against GitHub's SHA-256 before it's used
+        void SetupFfmpeg()
+        {
+            if (MessageBox.Show(this, "Download FFmpeg now?\n\nAbout 171 MB from github.com/BtbN/FFmpeg-Builds (the free LGPL build). It's checked against GitHub's checksum before use, and kept in Hallow Clips' own folder.",
+                "Hallow Clips", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            setupBtn.IsEnabled = false; ffState.Text = "Downloading FFmpeg...";
+            new Thread(() =>
+            {
+                string err = null;
+                try
+                {
+                    ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+                    var wc = new WebClient(); wc.Headers[HttpRequestHeader.UserAgent] = "HallowClips";
+                    var rel = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(wc.DownloadString("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"));
+                    var asset = ((System.Collections.ArrayList)rel["assets"]).Cast<Dictionary<string, object>>().First(a => (a["name"] as string) == "ffmpeg-master-latest-win64-lgpl.zip");
+                    var digest = (asset.ContainsKey("digest") ? asset["digest"] as string : null) ?? "";
+                    if (!digest.StartsWith("sha256:")) throw new Exception("GitHub didn't give a checksum, so it wasn't used.");
+                    var dir = Path.Combine(ClipSettings.Dir, "ffmpeg"); var zip = Path.Combine(ClipSettings.Dir, "ffmpeg-download.zip");
+                    Directory.CreateDirectory(ClipSettings.Dir);
+                    wc.DownloadProgressChanged += (s, e) => Dispatcher.BeginInvoke(new Action(() => ffState.Text = "Downloading FFmpeg... " + e.ProgressPercentage + "%"));
+                    var done = new ManualResetEvent(false); Exception dl = null;
+                    wc.Headers.Remove(HttpRequestHeader.UserAgent); wc.Headers[HttpRequestHeader.UserAgent] = "HallowClips";
+                    wc.DownloadFileCompleted += (s, e) => { dl = e.Error; done.Set(); };
+                    wc.DownloadFileAsync(new Uri(asset["browser_download_url"] as string), zip); done.WaitOne();
+                    if (dl != null) throw dl;
+                    string hash; using (var f = File.OpenRead(zip)) using (var sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "").ToLowerInvariant();
+                    if (hash != digest.Substring(7).ToLowerInvariant()) { File.Delete(zip); throw new Exception("The download didn't match GitHub's checksum, so it was thrown away."); }
+                    if (Directory.Exists(dir)) Directory.Delete(dir, true); Directory.CreateDirectory(dir);
+                    using (var z = ZipFile.OpenRead(zip))
+                    {
+                        foreach (var e in z.Entries.Where(e => e.FullName.Contains("/bin/") && (e.Name == "ffmpeg.exe" || e.Name == "ffprobe.exe"))) e.ExtractToFile(Path.Combine(dir, e.Name), true);
+                        var lic = z.Entries.FirstOrDefault(e => e.Name == "LICENSE.txt"); if (lic != null) lic.ExtractToFile(Path.Combine(dir, "FFmpeg-LICENSE.txt"), true);
+                    }
+                    File.Delete(zip);
+                }
+                catch (Exception e) { err = e.Message; }
+                Dispatcher.BeginInvoke(new Action(() => { setupBtn.IsEnabled = true; if (err != null) ffState.Text = "Couldn't set up FFmpeg: " + err; UpdateState(); Decide(); }));
+            }) { IsBackground = true }.Start();
+        }
+
+        // ---- the clip list: newest first, with a picture from each clip
+        void FillClips()
+        {
+            clipsList.Children.Clear();
+            List<FileInfo> files = new List<FileInfo>();
+            try { if (Directory.Exists(S.ClipsFolder)) files = new DirectoryInfo(S.ClipsFolder).GetFiles("*.mp4", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).Take(20).ToList(); } catch { }
+            if (files.Count == 0) { clipsList.Children.Add(new TextBlock { Text = "No clips yet. Start a game and press Ctrl+Alt+S when something good happens.", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(2, 6, 0, 0) }); return; }
+            foreach (var f in files)
+            {
+                var fi = f; var row = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(12), Padding = new Thickness(8, 8, 12, 8), Margin = new Thickness(0, 0, 0, 8) };
+                var dp = new DockPanel();
+                var thumb = new Border { Width = 128, Height = 72, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 14, 0), Background = B("#2E2639") };
+                DockPanel.SetDock(thumb, Dock.Left); dp.Children.Add(thumb); Thumb(fi.FullName, thumb);
+                var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                var play = new Button { Content = "Play", Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0) };
+                play.Click += (s, e) => { try { Process.Start(new ProcessStartInfo(fi.FullName) { UseShellExecute = true }); } catch { } };
+                var show = new Button { Content = "Show in folder", Tag = "icon", Width = 32, Height = 30, Padding = new Thickness(0), Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0), ToolTip = "Show in folder" };
+                show.Click += (s, e) => Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\"");
+                var del = new Button { Content = "Delete", Tag = "icon", Width = 32, Height = 30, Padding = new Thickness(0), Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0), ToolTip = "Move to the Recycle Bin" };
+                del.Click += (s, e) =>
+                {
+                    try { Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(fi.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin); Status(fi.Name + " is in the Recycle Bin."); FillClips(); }
+                    catch (Exception ex) { Status("Couldn't delete it: " + ex.Message); }
+                };
+                btns.Children.Add(play); btns.Children.Add(show); btns.Children.Add(del);
+                DockPanel.SetDock(btns, Dock.Right); dp.Children.Add(btns);
+                var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                t.Children.Add(new TextBlock { Text = fi.Directory.Name, FontSize = 14, FontWeight = FontWeights.SemiBold });
+                t.Children.Add(new TextBlock { Text = fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   ·   " + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5 });
+                dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
+            }
+        }
+        void Thumb(string clip, Border target)
+        {
+            var dir = Path.Combine(ClipSettings.Dir, "thumbs"); var jpg = Path.Combine(dir, Path.GetFileNameWithoutExtension(clip) + ".jpg");
+            Action show = () => { try { var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.UriSource = new Uri(jpg); bi.DecodePixelWidth = 256; bi.EndInit(); bi.Freeze(); target.Background = new ImageBrush(bi) { Stretch = Stretch.UniformToFill }; } catch { } };
+            if (File.Exists(jpg)) { show(); return; }
+            var ff = S.Ffmpeg; if (ff == null || Snap.On) return;
+            new Thread(() =>
+            {
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    var p = Process.Start(new ProcessStartInfo(ff, "-hide_banner -loglevel error -y -ss 1 -i \"" + clip + "\" -frames:v 1 -vf scale=256:-1 \"" + jpg + "\"") { UseShellExecute = false, CreateNoWindow = true });
+                    p.WaitForExit(15000);
+                    if (File.Exists(jpg)) Dispatcher.BeginInvoke(show);
+                }
+                catch { }
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        static bool StartsWithWindows() { using (var k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue("HallowClips") != null; }
+        static void SetStartWithWindows(bool on)
+        {
+            try { using (var k = Registry.CurrentUser.CreateSubKey(RunKey)) { if (on) k.SetValue("HallowClips", "\"" + Assembly.GetExecutingAssembly().Location + "\" --tray"); else k.DeleteValue("HallowClips", false); } } catch { }
+        }
+        void SetupTray()
+        {
+            tray = new WF.NotifyIcon { Text = "Hallow Clips", Visible = true };
+            try { tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); } catch { tray.Icon = System.Drawing.SystemIcons.Application; }
+            var menu = new WF.ContextMenuStrip();
+            var open = new WF.ToolStripMenuItem("Open Hallow Clips"); open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold); open.Click += (s, e) => ShowFromTray(); menu.Items.Add(open);
+            var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(SaveClip)); menu.Items.Add(save);
+            menu.Items.Add(new WF.ToolStripSeparator());
+            var quit = new WF.ToolStripMenuItem("Quit"); quit.Click += (s, e) => Quit(); menu.Items.Add(quit);
+            tray.ContextMenuStrip = menu;
+            tray.MouseClick += (s, e) => { if (e.Button == WF.MouseButtons.Left) ShowFromTray(); };
+        }
+        public void ShowFromTray() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); FillClips(); UpdateState(); }
+        void Quit() { exiting = true; rec.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } Application.Current.Shutdown(); }
+
+        public void SnapAll(string dir) { Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 760); }
+    }
+}
