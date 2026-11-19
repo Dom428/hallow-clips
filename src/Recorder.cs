@@ -28,7 +28,8 @@ namespace HallowClips
         [DataMember] public bool TrayOnClose = true;
         [DataMember] public string FfmpegPath = "";
         [DataMember] public string LastSeenVersion = "";   // v1.1: for What's new
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; }
+        [DataMember] public List<string> Favorites = new List<string>();   // v1.2: full paths of clips you starred
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); }
         public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -42,6 +43,8 @@ namespace HallowClips
             if (Frozen) return;
             try { Directory.CreateDirectory(Dir); using (var f = File.Create(FilePath)) new DataContractJsonSerializer(typeof(ClipSettings)).WriteObject(f, this); } catch { }
         }
+        public bool IsFavorite(string file) { return Favorites != null && Favorites.Any(f => string.Equals(f, file, StringComparison.OrdinalIgnoreCase)); }
+        public void SetFavorite(string file, bool on) { if (Favorites == null) Favorites = new List<string>(); Favorites.RemoveAll(f => string.Equals(f, file, StringComparison.OrdinalIgnoreCase)); if (on) Favorites.Add(file); }
         public string ClipsFolder { get { return !string.IsNullOrEmpty(Folder) ? Folder : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Hallow Clips"); } }
         public string Ffmpeg
         {
@@ -63,7 +66,7 @@ namespace HallowClips
         readonly StringBuilder log = new StringBuilder();
         public string LastLog { get { lock (log) return log.ToString(); } }
 
-        static string Encoder(string ffmpeg)
+        public static string Encoder(string ffmpeg)
         {
             // NVIDIA -> NVENC, AMD -> AMF, Intel -> Quick Sync, otherwise Windows' own Media Foundation encoder
             if (File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "nvidia-smi.exe"))) return "h264_nvenc";

@@ -6,13 +6,9 @@
 |---|---|
 | **1.0** | Instant replay: Ctrl+Alt+S saves the last 30 s (or your length) as an MP4; records only while a game runs; encoded on the graphics card (NVIDIA, AMD, Intel or Windows); game sound and your mic on separate tracks; clip list with thumbnails; FFmpeg set up with one click and checked |
 | **1.1** | Sound locked to the clock over long sessions, FFmpeg stops with the app, Ctrl+Alt+S taken warning, recorder.log; Hallow family link (pipe, --cmd, status.json, Clip saved in Overlay) |
+| **1.2** | Trim without re-encoding (keyframe cut), Copy for Discord (under 10 MB, on the clipboard), rename, favourites |
 
 ## Next
-
-### 1.2 - Trim and share
-- Trim a clip (start and end) without re-encoding
-- Copy for Discord: a smaller version under Discord's upload size
-- Rename clips and mark favourites
 
 ### 1.3 - More ways to record
 - Record a whole session (start / stop), not just the replay

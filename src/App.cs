@@ -27,14 +27,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.1";
+        public const string Version = "1.2";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -188,7 +188,7 @@ namespace HallowClips
             {
                 var jpg = ThumbPath(f.FullName);
                 clips.Add(new Dictionary<string, object> { { "file", f.FullName }, { "game", f.Directory.Name }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length },
-                    { "durationSec", DurationOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", false } });
+                    { "durationSec", DurationOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", S.IsFavorite(f.FullName) } });
             }
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
                 { "recording", rec.Running }, { "game", Current != null ? GameName : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "clips", clips } });
@@ -393,25 +393,100 @@ namespace HallowClips
                 var thumb = new Border { Width = 128, Height = 72, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 14, 0), Background = B("#2E2639") };
                 DockPanel.SetDock(thumb, Dock.Left); dp.Children.Add(thumb); Thumb(fi.FullName, thumb);
                 var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                Func<string, string, Button> ib = (label, tip) => new Button { Content = label, Tag = "icon", Width = 32, Height = 30, Padding = new Thickness(0), Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0), ToolTip = tip };
                 var play = new Button { Content = "Play", Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0) };
                 play.Click += (s, e) => { try { Process.Start(new ProcessStartInfo(fi.FullName) { UseShellExecute = true }); } catch { } };
-                var show = new Button { Content = "Show in folder", Tag = "icon", Width = 32, Height = 30, Padding = new Thickness(0), Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0), ToolTip = "Show in folder" };
+                bool fav = S.IsFavorite(fi.FullName);
+                var star = ib("Favourite", fav ? "Favourite - click to unmark" : "Mark as a favourite (never removed by the space limit)");
+                star.Foreground = fav ? B("#F07820") : (Brush)FindResource("Muted");
+                star.Click += (s, e) => { S.SetFavorite(fi.FullName, !S.IsFavorite(fi.FullName)); S.Save(); FillClips(); };
+                var trim = ib("Trim", "Trim - keep only the best part (no re-encoding)"); trim.Click += (s, e) => TrimClip(fi.FullName);
+                var discord = ib("Copy for Discord", "Copy for Discord - a smaller copy under 10 MB, ready to paste"); discord.Click += (s, e) => CopyForDiscord(fi.FullName);
+                var ren = ib("Rename", "Rename"); ren.Click += (s, e) => RenameClip(fi.FullName);
+                var show = ib("Show in folder", "Show in folder");
                 show.Click += (s, e) => Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\"");
-                var del = new Button { Content = "Delete", Tag = "icon", Width = 32, Height = 30, Padding = new Thickness(0), Style = (Style)FindResource("Btn"), Margin = new Thickness(6, 0, 0, 0), ToolTip = "Move to the Recycle Bin" };
+                var del = ib("Delete", "Move to the Recycle Bin");
                 del.Click += (s, e) =>
                 {
-                    try { Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(fi.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin); Status(fi.Name + " is in the Recycle Bin."); FillClips(); }
+                    try { Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(fi.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin); S.SetFavorite(fi.FullName, false); S.Save(); Status(fi.Name + " is in the Recycle Bin."); FillClips(); }
                     catch (Exception ex) { Status("Couldn't delete it: " + ex.Message); }
                 };
-                btns.Children.Add(play); btns.Children.Add(show); btns.Children.Add(del);
+                foreach (var b in new[] { play, star, trim, discord, ren, show, del }) btns.Children.Add(b);
+                if (busy.Contains(fi.FullName)) foreach (var b in new[] { trim, discord, ren, del }) b.IsEnabled = false;
                 DockPanel.SetDock(btns, Dock.Right); dp.Children.Add(btns);
                 var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-                t.Children.Add(new TextBlock { Text = fi.Directory.Name, FontSize = 14, FontWeight = FontWeights.SemiBold });
-                t.Children.Add(new TextBlock { Text = fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   ·   " + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5 });
+                var name = Path.GetFileNameWithoutExtension(fi.Name); var game = fi.Directory.Name;
+                bool own = !System.Text.RegularExpressions.Regex.IsMatch(name, @"^" + System.Text.RegularExpressions.Regex.Escape(game) + @" \d{4}-\d\d-\d\d \d\d-\d\d-\d\d$");   // renamed by you
+                t.Children.Add(new TextBlock { Text = own ? name : game, FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name });
+                var len = DurationOf(fi);
+                t.Children.Add(new TextBlock { Text = (own ? game + "   \u00B7   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   \u00B7   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   \u00B7   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5 });
                 dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
             }
         }
-        static string ThumbPath(string clip) { return Path.Combine(ClipSettings.Dir, "thumbs", Path.GetFileNameWithoutExtension(clip) + ".jpg"); }
+
+        // ---- v1.2: trim, Copy for Discord, rename (FFmpeg runs in the background; the list shows what's happening)
+        readonly HashSet<string> busy = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Work(string clip, string doing, Func<string> job, Action<string> done)
+        {
+            if (busy.Contains(clip) || S.Ffmpeg == null) { if (S.Ffmpeg == null) Status("Set up FFmpeg first."); return; }
+            busy.Add(clip); Status(doing); FillClips();
+            new Thread(() =>
+            {
+                string r; try { r = job(); } catch (Exception ex) { r = "!" + ex.Message; }
+                Dispatcher.BeginInvoke(new Action(() => { busy.Remove(clip); done(r); FillClips(); }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+        void TrimClip(string clip)
+        {
+            var ff = S.Ffmpeg; if (ff == null) { Status("Set up FFmpeg first."); return; }
+            if (busy.Contains(clip)) return;
+            Status("Reading the clip...");
+            new Thread(() =>
+            {
+                var info = ClipOps.Inspect(ff, clip);
+                Dispatcher.BeginInvoke(new Action(() => TrimClip(clip, ff, info)));
+            }) { IsBackground = true }.Start();
+        }
+        void TrimClip(string clip, string ff, ClipOps.Info info)
+        {
+            if (info.Duration <= 0) { Status("Couldn't read that clip."); return; }
+            var w = new TrimWindow(clip, ff, info) { Owner = this }; w.ShowDialog();
+            if (!w.Ok) { Status(""); return; }
+            double a = w.Start, b = w.End;
+            Work(clip, "Trimming " + Path.GetFileName(clip) + "...", () => { string err; var f = ClipOps.Trim(ff, clip, info.Codec, a, b, out err); return f ?? "!" + err; },
+                r => { if (r.StartsWith("!")) Status(r.Substring(1)); else { if (S.IsFavorite(clip)) { S.SetFavorite(r, true); S.Save(); } Status("Saved the trimmed copy: " + Path.GetFileName(r) + " (the original is still there)."); } });
+        }
+        void CopyForDiscord(string clip)
+        {
+            var ff = S.Ffmpeg;
+            Work(clip, "Making a Discord copy of " + Path.GetFileName(clip) + "...", () =>
+            {
+                var info = ClipOps.Inspect(ff, clip); string err;
+                var f = ClipOps.ForDiscord(ff, clip, info, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err);
+                return f ?? "!" + err;
+            }, r =>
+            {
+                if (r.StartsWith("!")) { Status(r.Substring(1)); return; }
+                try
+                {
+                    Clipboard.SetFileDropList(new System.Collections.Specialized.StringCollection { r });
+                    var mb = (new FileInfo(r).Length / 1048576.0).ToString("0.0");
+                    Status("Copied for Discord (" + mb + " MB) - paste it into a Discord message with Ctrl+V.");
+                    toast.Flash("Copied for Discord - paste with Ctrl+V");
+                }
+                catch (Exception ex) { Status("Made " + r + " but couldn't copy it: " + ex.Message); }
+            });
+        }
+        void RenameClip(string clip)
+        {
+            if (busy.Contains(clip)) return;
+            var w = new RenameWindow(clip) { Owner = this }; w.ShowDialog();
+            if (w.NewName == null) return;
+            string err; var dest = ClipOps.Rename(clip, w.NewName, out err);
+            if (dest == null) { Status(err); return; }
+            if (S.IsFavorite(clip)) { S.SetFavorite(clip, false); S.SetFavorite(dest, true); S.Save(); }
+            Status("Renamed to " + Path.GetFileName(dest) + "."); FillClips();
+        }        public static string ThumbPath(string clip) { return Path.Combine(ClipSettings.Dir, "thumbs", Path.GetFileNameWithoutExtension(clip) + ".jpg"); }
         void Thumb(string clip, Border target)
         {
             var dir = Path.Combine(ClipSettings.Dir, "thumbs"); var jpg = ThumbPath(clip);
@@ -456,6 +531,12 @@ namespace HallowClips
         {
             Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 760);
             Snap.Save(new WhatsNewWindow(WhatsNew.Notes.ToList()), System.IO.Path.Combine(dir, "whatsnew.png"), 560, 0);
+            var clip = RecentClips(1).FirstOrDefault();
+            if (clip != null)
+            {
+                Snap.Save(new RenameWindow(clip.FullName), System.IO.Path.Combine(dir, "rename.png"), 480, 0);
+                if (S.Ffmpeg != null) Snap.Save(new TrimWindow(clip.FullName, S.Ffmpeg, ClipOps.Inspect(S.Ffmpeg, clip.FullName)), System.IO.Path.Combine(dir, "trim.png"), 580, 0);
+            }
         }
     }
 }

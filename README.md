@@ -6,6 +6,7 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 - Screen grabbed with Desktop Duplication and encoded on the graphics card (NVENC / AMF / Quick Sync)
 - Game sound (WASAPI loopback) and your mic on **separate audio tracks**
 - 15 s to 2 min, 30 / 60 fps, quality levels, any screen; clip list with thumbnails
+- Trim clips without re-encoding, **Copy for Discord** (re-encoded under 10 MB and put on the clipboard), rename, favourites
 - Sound locked to the clock, so it stays in step with the picture however long you play
 - Hallow family link: other Hallow apps save a clip and list your clips (see below)
 

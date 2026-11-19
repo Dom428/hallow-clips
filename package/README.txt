@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.2
+- Trim a clip (scissors): no re-encoding, so it's instant and keeps full quality. The original stays.
+- Copy for Discord: a copy under 10 MB on the clipboard - paste it into Discord with Ctrl+V.
+- Rename clips (pen) and star your favourites.
+
 WHAT'S NEW IN 1.1
 - Sound stays locked to the picture however long you play, and recording stops if the app is closed hard.
 - Tells you when another app already uses Ctrl+Alt+S.
@@ -23,6 +28,8 @@ HOW IT WORKS
 GOOD TO KNOW
 - The buffer only exists on your PC and is overwritten constantly; nothing is uploaded anywhere.
 - Deleting a clip in the app sends it to the Recycle Bin.
+- Trim keeps the original and saves a trimmed copy next to it. Discord copies are kept for 2 days in
+  %LOCALAPPDATA%\HallowClips\discord.
 
 CREDITS
 Recording by FFmpeg (https://ffmpeg.org), LGPL build from github.com/BtbN/FFmpeg-Builds - downloaded separately, not included.

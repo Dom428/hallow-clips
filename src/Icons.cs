@@ -19,6 +19,7 @@ namespace HallowClips
         // exact label -> icon
         static readonly Dictionary<string, string> Labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             { "Save a clip now", "floppy-disk" }, { "Open clips folder", "folder-open" }, { "Play", "play" }, { "Show in folder", "folder-open" }, { "Delete", "trash-can" }, { "x", "xmark" }, { "OK", "check" }, { "Got it", "check" }, { "All release notes", "arrow-up-right-from-square" },
+            { "Favourite", "star" }, { "Trim", "scissors" }, { "Copy for Discord", "discord" }, { "Rename", "pen" }, { "Cancel", "xmark" }, { "Save trimmed copy", "scissors" },
         };
         static readonly string[][] Prefixes = { new[] { "Set up FFmpeg", "download" } };
         public static string ForLabel(string label)

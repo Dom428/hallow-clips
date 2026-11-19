@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.2", new[] { "Trim a clip (scissors) - no re-encoding, so it's instant and keeps full quality", "Copy for Discord: a copy under 10 MB, ready to paste with Ctrl+V", "Rename clips and star your favourites" }),
             Tuple.Create("1.1", new[] { "Other Hallow apps can save a clip and see your clips (Hallow Overlay shows Clip saved)", "Sound stays in step with the picture in long sessions, and recording stops cleanly if the app is closed hard" }),
         };
 
