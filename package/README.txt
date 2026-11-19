@@ -7,6 +7,12 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.1
+- Sound stays locked to the picture however long you play, and recording stops if the app is closed hard.
+- Tells you when another app already uses Ctrl+Alt+S.
+- Hallow family: Hallow Remote/Toolkit can save a clip, Hallow Hub can list your clips, Hallow Overlay shows Clip saved.
+  (HallowClips.exe --cmd "save" works from scripts too.)
+
 HOW IT WORKS
 - While a game runs, Hallow Clips keeps the last moments in a rolling buffer (it keeps overwriting itself).
 - Press Ctrl+Alt+S and the last 30 seconds are saved as an MP4 in Videos\Hallow Clips\<game>.

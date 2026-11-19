@@ -1,6 +1,7 @@
-// Hallow Clips - sound for the replay: what your speakers/headset play (WASAPI loopback) and your mic, each streamed to FFmpeg
+﻿// Hallow Clips - sound for the replay: what your speakers/headset play (WASAPI loopback) and your mic, each streamed to FFmpeg
 // through a named pipe as raw 32-bit float audio. Silence is filled in, so the audio never stalls the video when nothing plays.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -58,27 +59,66 @@ namespace HallowClips
                 var cid = typeof(IAudioCaptureClient).GUID; object c;
                 if (client.GetService(ref cid, out c) != 0) { Error = "No capture service"; return false; }
                 capture = (IAudioCaptureClient)c;
-                pipe = new NamedPipeServerStream(PipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.None, 0, 1 << 20);
+                pipe = new NamedPipeServerStream(PipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.None, 0, 1 << 16);   // small: FFmpeg gets fresh sound, not a backlog
                 return true;
             }
             catch (Exception e) { Error = e.Message; return false; }
         }
 
         public void Start() { thread = new Thread(Run) { IsBackground = true, Priority = ThreadPriority.AboveNormal, Name = "clips audio" }; thread.Start(); }
-        public void Stop() { stop = true; try { if (pipe != null) pipe.Dispose(); } catch { } }
+        public void Stop() { stop = true; lock (queue) Monitor.PulseAll(queue); try { if (pipe != null) pipe.Dispose(); } catch { } }
 
+        // v1.1: set when FFmpeg starts recording. Until then only silence is sent (FFmpeg reads a little while it starts up);
+        // from then on the audio clock counts from the same moment as the picture.
+        public volatile bool Live;
+        // what happened, for recorder.log: frames from Windows, silence added, frames dropped, glitches Windows reported
+        public long FramesIn, FramesPadded, FramesDropped, Glitches; public int StartupMs;   // StartupMs: FFmpeg opened the pipe this long before it started recording
+
+        readonly Queue<byte[]> queue = new Queue<byte[]>(); int queued;
+        void Enqueue(byte[] src, int bytes)
+        {
+            var b = new byte[bytes]; Buffer.BlockCopy(src, 0, b, 0, bytes);
+            lock (queue)
+            {
+                while (queued > Rate * 4 * Channels * 5 && queue.Count > 0) queued -= queue.Dequeue().Length;   // FFmpeg stuck: keep at most 5 s
+                queue.Enqueue(b); queued += bytes; Monitor.Pulse(queue);
+            }
+        }
+        // FFmpeg reads the pipe on its own schedule; a separate writer means a slow read never makes us miss sound from Windows
+        void Writer()
+        {
+            try
+            {
+                while (!stop)
+                {
+                    byte[] b;
+                    lock (queue) { while (queue.Count == 0 && !stop) Monitor.Wait(queue, 200); if (stop) break; b = queue.Dequeue(); queued -= b.Length; }
+                    pipe.Write(b, 0, b.Length);
+                }
+            }
+            catch { }   // FFmpeg stopped / pipe closed
+        }
+
+        // Keeps the sound locked to the clock: whatever Windows delivers is passed on, gaps (nothing playing, glitches) are
+        // filled with silence and anything that runs ahead is trimmed - so over hours the sound can't drift from the picture.
         void Run()
         {
             try
             {
                 pipe.WaitForConnection();   // FFmpeg opens the pipe when it starts
                 client.Start();
-                int frameBytes = 4 * Channels; long written = 0; var clock = Stopwatch.StartNew();
-                var buf = new byte[frameBytes * Rate];   // up to 1 s per write
+                new Thread(Writer) { IsBackground = true, Priority = ThreadPriority.AboveNormal, Name = "clips audio out" }.Start();
+                int frameBytes = 4 * Channels; long written = 0; var clock = Stopwatch.StartNew(); bool wasLive = false;
+                var buf = new byte[frameBytes * Rate];   // up to 1 s per packet
+                long ahead = Rate / 6, behind = Rate / 25, keep = Rate / 100;   // trim past 166 ms ahead, fill past 40 ms behind (to 10 ms)
                 while (!stop)
                 {
+                    if (Live && !wasLive)
+                    {
+                        // recording really starts now: drop the start-up silence still waiting and count from here
+                        wasLive = true; lock (queue) { queue.Clear(); queued = 0; } StartupMs = (int)clock.ElapsedMilliseconds; clock.Restart(); written = 0;
+                    }
                     uint next; capture.GetNextPacketSize(out next);
-                    bool any = false;
                     while (next > 0 && !stop)
                     {
                         IntPtr data; uint frames, flags; ulong pos, qpc;
@@ -86,17 +126,21 @@ namespace HallowClips
                         int bytes = (int)frames * frameBytes; if (bytes > buf.Length) buf = new byte[bytes];
                         if ((flags & 0x2) != 0) Array.Clear(buf, 0, bytes); else Marshal.Copy(data, buf, 0, bytes);
                         capture.ReleaseBuffer(frames);
-                        pipe.Write(buf, 0, bytes); written += frames; any = true;
+                        if ((flags & 0x1) != 0) Glitches++;
+                        FramesIn += frames;
+                        long due = (long)(clock.Elapsed.TotalSeconds * Rate);
+                        if (wasLive && written + frames > due + ahead) FramesDropped += frames;   // running ahead of the clock
+                        else if (wasLive) { Enqueue(buf, bytes); written += frames; }
                         capture.GetNextPacketSize(out next);
                     }
-                    // nothing playing: Windows sends no loopback data, so keep the stream going with silence (keeps sound and picture in step)
-                    long due = (long)(clock.Elapsed.TotalSeconds * Rate) - Rate / 20;
-                    if (!any && due > written)
+                    long now = (long)(clock.Elapsed.TotalSeconds * Rate);
+                    if (now - written > behind || !wasLive)
                     {
-                        int n = (int)Math.Min(due - written, buf.Length / frameBytes);
-                        Array.Clear(buf, 0, n * frameBytes); pipe.Write(buf, 0, n * frameBytes); written += n;
+                        // nothing playing (Windows sends nothing then), a glitch, or still starting up: silence up to the clock
+                        long n = Math.Min(now - keep - written, buf.Length / frameBytes);
+                        if (n > 0) { Array.Clear(buf, 0, (int)n * frameBytes); Enqueue(buf, (int)n * frameBytes); written += n; if (wasLive) FramesPadded += n; }
                     }
-                    Thread.Sleep(8);
+                    Thread.Sleep(5);
                 }
             }
             catch { }   // FFmpeg stopped / pipe closed

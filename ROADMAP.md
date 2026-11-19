@@ -5,12 +5,9 @@
 | Version | What it added |
 |---|---|
 | **1.0** | Instant replay: Ctrl+Alt+S saves the last 30 s (or your length) as an MP4; records only while a game runs; encoded on the graphics card (NVIDIA, AMD, Intel or Windows); game sound and your mic on separate tracks; clip list with thumbnails; FFmpeg set up with one click and checked |
+| **1.1** | Sound locked to the clock over long sessions, FFmpeg stops with the app, Ctrl+Alt+S taken warning, recorder.log; Hallow family link (pipe, --cmd, status.json, Clip saved in Overlay) |
 
 ## Next
-
-### 1.1 - Fixes from real use
-- Ctrl+Alt+S during a real game, and recording starting and stopping with games
-- Check sound stays in step with the picture over long sessions
 
 ### 1.2 - Trim and share
 - Trim a clip (start and end) without re-encoding

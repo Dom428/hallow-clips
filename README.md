@@ -6,8 +6,17 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 - Screen grabbed with Desktop Duplication and encoded on the graphics card (NVENC / AMF / Quick Sync)
 - Game sound (WASAPI loopback) and your mic on **separate audio tracks**
 - 15 s to 2 min, 30 / 60 fps, quality levels, any screen; clip list with thumbnails
+- Sound locked to the clock, so it stays in step with the picture however long you play
+- Hallow family link: other Hallow apps save a clip and list your clips (see below)
 
 Uses [FFmpeg](https://ffmpeg.org) (LGPL build from BtbN/FFmpeg-Builds), downloaded on first use and checked against GitHub's SHA-256 - not included here.
+
+## Hallow family link
+
+- Named pipe `HallowFamily.Clips.<user>` (this Windows user only, never over the network): one line in, one line out. `ping`, `status`, `save` (replies `ok {"file":"..."}` or `error Nothing recorded yet`).
+- `HallowClips.exe --cmd "save"` sends a command to the running copy and prints the reply (exit code 0 ok, 1 error, 2 not running).
+- `%LOCALAPPDATA%\HallowClips\status.json`: recording state, current game, clip length, folder and the 30 newest clips (file, game, time, size, length, thumbnail, favourite). Written atomically when something changes.
+- After a save, Hallow Overlay shows *Clip saved* when it runs.
 
 Built with the C# compiler that ships with Windows (.NET Framework 4.8): run `build.ps1`. No admin needed.
 

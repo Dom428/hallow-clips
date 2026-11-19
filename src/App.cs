@@ -27,17 +27,19 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.0";
+        public const string Version = "1.1";
         [STAThread]
         public static void Main(string[] args)
         {
+            int ci = Array.IndexOf(args, "--cmd");   // Hallow family: send a command to the running copy, print the reply
+            if (ci >= 0) { Environment.Exit(Family.RunCmd(ci + 1 < args.Length ? string.Join(" ", args.Skip(ci + 1)) : "")); return; }
             int si = Array.IndexOf(args, "--snap");
             if (si >= 0 && si + 1 < args.Length)
             {
@@ -121,16 +123,88 @@ namespace HallowClips
             try { games = Library.Scan(new List<Game>()); } catch { }
             SetupTray();
             var hwnd = new WindowInteropHelper(this).EnsureHandle();
-            RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
-            HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) => { if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(); handled = true; } return IntPtr.Zero; });
+            hotkeyOk = RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
+            HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) => { if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null); handled = true; } return IntPtr.Zero; });
             var poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             poll.Tick += (s, e) => { try { tracker.Poll(games.Concat(games.SelectMany(g => g.Alts)).ToList()); } catch { } Decide(); };
             poll.Start();
             var rescan = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) }; rescan.Tick += (s, e) => { try { games = Library.Scan(new List<Game>()); } catch { } }; rescan.Start();
             UpdateState(); FillClips();
+            if (!hotkeyOk) Status("Ctrl+Alt+S is taken by another app - use the Save button or the tray menu, or close that app and restart Hallow Clips.");
+            Family.Serve("Clips", Command);
+            // What's new: an update from 1.0 (which didn't remember versions) counts as seen 1.0 when FFmpeg was already set up
+            if (string.IsNullOrEmpty(S.LastSeenVersion)) { S.LastSeenVersion = S.Ffmpeg != null ? "1.0" : Program.Version; S.Save(); }
+            IsVisibleChanged += (s, e) => { if (IsVisible) Dispatcher.BeginInvoke(new Action(ShowWhatsNew), DispatcherPriority.ApplicationIdle); };
             if (!startHidden) Show();
             Dispatcher.BeginInvoke(new Action(Decide), DispatcherPriority.ApplicationIdle);
         }
+        bool hotkeyOk;
+        void ShowWhatsNew()
+        {
+            if (S.LastSeenVersion == Program.Version || !IsVisible || Snap.On) return;
+            var items = WhatsNew.Since(S.LastSeenVersion);
+            S.LastSeenVersion = Program.Version; S.Save();
+            if (items.Count > 0) new WhatsNewWindow(items) { Owner = this }.Show();
+        }
+
+        // ---- Hallow family: commands from other Hallow apps (Remote, Toolkit) and "HallowClips.exe --cmd"
+        string Command(string line)
+        {
+            var sp = line.IndexOf(' '); var cmd = (sp < 0 ? line : line.Substring(0, sp)).ToLowerInvariant();
+            if (cmd == "ping") return "ok " + Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version } });
+            if (cmd == "status")
+            {
+                string json = null; var op = Dispatcher.BeginInvoke(new Action(() => json = StatusJson()));
+                return op.Wait(TimeSpan.FromSeconds(5)) == DispatcherOperationStatus.Completed && json != null ? "ok " + json : "error busy";
+            }
+            if (cmd == "save")
+            {
+                string file = null, err = null; var done = new ManualResetEvent(false);
+                var op = Dispatcher.BeginInvoke(new Action(() => SaveClip((f, e) => { file = f; err = e; done.Set(); })));
+                if (op.Wait(TimeSpan.FromSeconds(5)) != DispatcherOperationStatus.Completed) return "error busy";
+                if (!done.WaitOne(35000)) return "error Saving is taking too long";
+                return file != null ? "ok " + Family.Json(new Dictionary<string, object> { { "file", file } }) : "error " + Family.OneLine(err ?? "Couldn't save the clip");
+            }
+            return "error unknown command";
+        }
+
+        // ---- status.json: what other Hallow apps read (Hub's game page, Toolkit's Discord post)
+        readonly Dictionary<string, Tuple<long, DateTime, double>> durations = new Dictionary<string, Tuple<long, DateTime, double>>(StringComparer.OrdinalIgnoreCase);
+        List<FileInfo> RecentClips(int n)
+        {
+            try { if (Directory.Exists(S.ClipsFolder)) return new DirectoryInfo(S.ClipsFolder).GetFiles("*.mp4", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).Take(n).ToList(); } catch { }
+            return new List<FileInfo>();
+        }
+        double DurationOf(FileInfo f)
+        {
+            Tuple<long, DateTime, double> c;
+            if (durations.TryGetValue(f.FullName, out c) && c.Item1 == f.Length && c.Item2 == f.LastWriteTimeUtc) return c.Item3;
+            var d = Math.Round(Mp4.Duration(f.FullName), 1); durations[f.FullName] = Tuple.Create(f.Length, f.LastWriteTimeUtc, d); return d;
+        }
+        string StatusJson()
+        {
+            var clips = new List<object>();
+            foreach (var f in RecentClips(30))
+            {
+                var jpg = ThumbPath(f.FullName);
+                clips.Add(new Dictionary<string, object> { { "file", f.FullName }, { "game", f.Directory.Name }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length },
+                    { "durationSec", DurationOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", false } });
+            }
+            return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
+                { "recording", rec.Running }, { "game", Current != null ? GameName : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "clips", clips } });
+        }
+        string lastStatusKey;
+        // writes status.json when something changed (force: the clip list changed)
+        void WriteStatus(bool force)
+        {
+            if (Snap.On) return;
+            var key = rec.Running + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder;
+            if (!force && key == lastStatusKey) return;
+            lastStatusKey = key;
+            if (statusSoon == null) { statusSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) }; statusSoon.Tick += (s, e) => { statusSoon.Stop(); var json = StatusJson(); new Thread(() => Family.WriteStatus(json)) { IsBackground = true }.Start(); }; }
+            statusSoon.Stop(); statusSoon.Start();   // several changes in a row are written once
+        }
+        DispatcherTimer statusSoon;
 
         static ImageSource AppIcon()
         {
@@ -146,23 +220,29 @@ namespace HallowClips
             bool want = S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null);
             if (want && !rec.Running) { if (!rec.Start()) Status(rec.Error); }
             else if (!want && rec.Running) rec.Stop();
-            UpdateState();
+            UpdateState(); WriteStatus(false);
         }
 
-        void SaveClip()
+        // done (optional) gets the saved file, or null and why not
+        readonly List<Action<string, string>> waiting = new List<Action<string, string>>();
+        void SaveClip(Action<string, string> done)
         {
-            if (saving) return;
-            if (!rec.Running) { toast.Flash(S.Ffmpeg == null ? "Hallow Clips isn't set up yet" : "Not recording right now"); return; }
-            saving = true; var name = GameName; var secs = S.Seconds;
+            if (saving) { if (done != null) waiting.Add(done); return; }   // already saving: that clip is the answer
+            if (!rec.Running) { toast.Flash(S.Ffmpeg == null ? "Hallow Clips isn't set up yet" : "Not recording right now"); if (done != null) done(null, "Nothing recorded yet"); return; }
+            saving = true; if (done != null) waiting.Add(done); var name = GameName; var secs = S.Seconds;
             toast.Flash("Saving the last " + secs + " seconds...");
             new Thread(() =>
             {
                 string err; var f = rec.Save(secs, name, out err);
+                // Hallow Overlay shows "Clip saved" on its panel when it runs; otherwise our own pop-up does
+                bool overlay = false;
+                if (f != null) { var r = Family.Send("Overlay", "flash Clip saved", 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     saving = false;
-                    if (f != null) { toast.Flash("Clip saved - " + name + ", " + secs + " s"); Status("Saved " + Path.GetFileName(f)); FillClips(); }
+                    if (f != null) { if (overlay) toast.Hide(); else toast.Flash("Clip saved - " + name + ", " + secs + " s"); Status("Saved " + Path.GetFileName(f)); FillClips(); }
                     else { toast.Flash("Couldn't save the clip"); Status(err); }
+                    var w = waiting.ToList(); waiting.Clear(); foreach (var d in w) try { d(f, err); } catch { }
                 }));
             }) { IsBackground = true }.Start();
         }
@@ -181,7 +261,7 @@ namespace HallowClips
             title.Children.Add(new TextBlock { Text = " CLIPS", FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(title, Dock.Left); head.Children.Add(title);
             var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), HorizontalAlignment = HorizontalAlignment.Right, ToolTip = "Same as Ctrl+Alt+S" };
-            saveNow.Click += (s, e) => SaveClip(); head.Children.Add(saveNow);
+            saveNow.Click += (s, e) => SaveClip(null); head.Children.Add(saveNow);
             root.Children.Add(head);
             // status card
             var card = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
@@ -303,9 +383,8 @@ namespace HallowClips
         // ---- the clip list: newest first, with a picture from each clip
         void FillClips()
         {
-            clipsList.Children.Clear();
-            List<FileInfo> files = new List<FileInfo>();
-            try { if (Directory.Exists(S.ClipsFolder)) files = new DirectoryInfo(S.ClipsFolder).GetFiles("*.mp4", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).Take(20).ToList(); } catch { }
+            clipsList.Children.Clear(); WriteStatus(true);
+            var files = RecentClips(20);
             if (files.Count == 0) { clipsList.Children.Add(new TextBlock { Text = "No clips yet. Start a game and press Ctrl+Alt+S when something good happens.", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(2, 6, 0, 0) }); return; }
             foreach (var f in files)
             {
@@ -332,9 +411,10 @@ namespace HallowClips
                 dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
             }
         }
+        static string ThumbPath(string clip) { return Path.Combine(ClipSettings.Dir, "thumbs", Path.GetFileNameWithoutExtension(clip) + ".jpg"); }
         void Thumb(string clip, Border target)
         {
-            var dir = Path.Combine(ClipSettings.Dir, "thumbs"); var jpg = Path.Combine(dir, Path.GetFileNameWithoutExtension(clip) + ".jpg");
+            var dir = Path.Combine(ClipSettings.Dir, "thumbs"); var jpg = ThumbPath(clip);
             Action show = () => { try { var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.UriSource = new Uri(jpg); bi.DecodePixelWidth = 256; bi.EndInit(); bi.Freeze(); target.Background = new ImageBrush(bi) { Stretch = Stretch.UniformToFill }; } catch { } };
             if (File.Exists(jpg)) { show(); return; }
             var ff = S.Ffmpeg; if (ff == null || Snap.On) return;
@@ -345,7 +425,7 @@ namespace HallowClips
                     Directory.CreateDirectory(dir);
                     var p = Process.Start(new ProcessStartInfo(ff, "-hide_banner -loglevel error -y -ss 1 -i \"" + clip + "\" -frames:v 1 -vf scale=256:-1 \"" + jpg + "\"") { UseShellExecute = false, CreateNoWindow = true });
                     p.WaitForExit(15000);
-                    if (File.Exists(jpg)) Dispatcher.BeginInvoke(show);
+                    if (File.Exists(jpg)) Dispatcher.BeginInvoke(new Action(() => { show(); WriteStatus(true); }));
                 }
                 catch { }
             }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
@@ -363,7 +443,7 @@ namespace HallowClips
             try { tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); } catch { tray.Icon = System.Drawing.SystemIcons.Application; }
             var menu = new WF.ContextMenuStrip();
             var open = new WF.ToolStripMenuItem("Open Hallow Clips"); open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold); open.Click += (s, e) => ShowFromTray(); menu.Items.Add(open);
-            var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(SaveClip)); menu.Items.Add(save);
+            var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => SaveClip(null))); menu.Items.Add(save);
             menu.Items.Add(new WF.ToolStripSeparator());
             var quit = new WF.ToolStripMenuItem("Quit"); quit.Click += (s, e) => Quit(); menu.Items.Add(quit);
             tray.ContextMenuStrip = menu;
@@ -372,6 +452,10 @@ namespace HallowClips
         public void ShowFromTray() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); FillClips(); UpdateState(); }
         void Quit() { exiting = true; rec.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } Application.Current.Shutdown(); }
 
-        public void SnapAll(string dir) { Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 760); }
+        public void SnapAll(string dir)
+        {
+            Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 760);
+            Snap.Save(new WhatsNewWindow(WhatsNew.Notes.ToList()), System.IO.Path.Combine(dir, "whatsnew.png"), 560, 0);
+        }
     }
 }
