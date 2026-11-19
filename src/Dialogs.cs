@@ -72,6 +72,17 @@ namespace HallowClips
                 d.Children.Add(l); d.Children.Add(s); return d;
             };
             sp.Children.Add(row("Start", startS)); sp.Children.Add(row("End", endS));
+            if (info.Marks.Count > 0)   // v1.8: your markers - click one to start a few seconds before it
+            {
+                var mk = new WrapPanel { Margin = new Thickness(44, 10, 0, 0) };
+                mk.Children.Add(new TextBlock { Text = "Markers", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+                foreach (var m in info.Marks)
+                {
+                    var at = m; var b = new Button { Content = Clock(m).Split('.')[0], Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 6, 0), Padding = new Thickness(10, 3, 10, 3), ToolTip = "Start 5 s before this marker" };
+                    b.Click += (s, e) => startS.Value = Math.Max(0, at - 5); mk.Children.Add(b);
+                }
+                sp.Children.Add(mk);
+            }
             lenText.Foreground = (Brush)FindResource("Muted"); lenText.Margin = new Thickness(0, 10, 0, 0); lenText.TextWrapping = TextWrapping.Wrap; sp.Children.Add(lenText);
             sp.Children.Add(Foot("Save trimmed copy", () => { Ok = End - Start >= 0.5; if (Ok) Close(); }));
             Content = sp;

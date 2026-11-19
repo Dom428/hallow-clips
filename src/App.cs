@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.7.0.0")]
-[assembly: AssemblyFileVersion("1.7.0.0")]
+[assembly: AssemblyVersion("1.8.0.0")]
+[assembly: AssemblyFileVersion("1.8.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.7";
+        public const string Version = "1.8";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -115,7 +115,7 @@ namespace HallowClips
         public MainWindow(bool hidden)
         {
             startHidden = hidden; rec = new Recorder(S);
-            Title = "Hallow Clips"; Width = 820; Height = 820; MinWidth = 700; MinHeight = 560;
+            Title = "Hallow Clips"; Width = 820; Height = 900; MinWidth = 700; MinHeight = 560;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             try { Icon = AppIcon(); } catch { }
@@ -136,10 +136,14 @@ namespace HallowClips
             var hwnd = new WindowInteropHelper(this).EnsureHandle();
             hotkeyOk = RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
             sessionKeyOk = RegisterHotKey(hwnd, 2, 0x4003, 0x52);   // v1.3: Ctrl+Alt+R starts / stops a session recording
+            shotKeyOk = RegisterHotKey(hwnd, 3, 0x4003, 0x50);      // v1.8: Ctrl+Alt+P takes a screenshot
+            markKeyOk = RegisterHotKey(hwnd, 4, 0x4003, 0x42);      // v1.8: Ctrl+Alt+B marks this moment
             HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) =>
             {
                 if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null); handled = true; }
                 if (msg == 0x0312 && wp.ToInt32() == 2) { ToggleSession(); handled = true; }
+                if (msg == 0x0312 && wp.ToInt32() == 3) { Screenshot(); handled = true; }
+                if (msg == 0x0312 && wp.ToInt32() == 4) { Mark(); handled = true; }
                 return IntPtr.Zero;
             });
             var poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
@@ -149,6 +153,8 @@ namespace HallowClips
             UpdateState(); FillClips();
             if (!hotkeyOk) Status("Ctrl+Alt+S is taken by another app - use the Save button or the tray menu, or close that app and restart Hallow Clips.");
             else if (!sessionKeyOk) Status("Ctrl+Alt+R is taken by another app - use the Record session button instead.");
+            else if (!shotKeyOk || !markKeyOk) Status((!shotKeyOk ? "Ctrl+Alt+P" : "Ctrl+Alt+B") + " is taken by another app - use the Hallow icon menu instead.");
+            DateTime lastCheck; if (!DateTime.TryParse(S.LastUpdateCheck, out lastCheck) || (DateTime.Now - lastCheck).TotalHours > 20) CheckForUpdate(false);
             FindCodecs(); FinishLeftoverSessions();
             Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
             Family.Serve("Clips", Command);
@@ -255,13 +261,16 @@ namespace HallowClips
             Func<string, string, object, Dictionary<string, object>> it = (id, label, chk) => { var d = new Dictionary<string, object> { { "id", id }, { "label", label } }; if (chk != null) d["checked"] = chk; return d; };
             var save = it("save", "Save clip", null); if (!rec.Running) save["enabled"] = false;
             var record = it("record", "Record session", session != null); if (finishing || S.Ffmpeg == null) record["enabled"] = false;
-            return new List<object> { save, record, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
+            var mark = it("mark", "Add marker", null); if (!rec.Running && session == null) mark["enabled"] = false;
+            return new List<object> { save, record, it("screenshot", "Take screenshot", null), mark, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
         }
         string Invoke(string id)
         {
             if (id == "save") { SaveClip(null); return null; }
             if (id == "record") { ToggleSession(); return null; }
             if (id == "replay") { S.On = !S.On; S.Save(); if (replaySwitch != null) replaySwitch.IsChecked = S.On; Restart(); return null; }
+            if (id == "screenshot") { Screenshot(); return null; }
+            if (id == "mark") { Mark(); return null; }
             if (id == "folder") { try { Directory.CreateDirectory(S.ClipsFolder); Process.Start("explorer.exe", "\"" + S.ClipsFolder + "\""); return null; } catch (Exception e) { return Family.OneLine(e.Message); } }
             return "unknown item";
         }
@@ -372,7 +381,7 @@ namespace HallowClips
             toast.Flash("Saving the last " + secs + " seconds...");
             new Thread(() =>
             {
-                string err; var f = rec.Save(secs, name, out err);
+                var mk = marks.ToList(); string err; var f = rec.Save(secs, name, mk, out err);
                 // Hallow Overlay shows "Clip saved" on its panel when it runs; otherwise our own pop-up does
                 bool overlay = false;
                 if (f != null) { var r = Family.Send("Overlay", "flash Clip saved", 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
@@ -404,7 +413,10 @@ namespace HallowClips
             sessionBtn = new Button { Content = "Record session", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Record everything from now until you stop (Ctrl+Alt+R)" };
             sessionBtn.Click += (s, e) => ToggleSession();
             var hb = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            hb.Children.Add(sessionBtn); hb.Children.Add(saveNow); head.Children.Add(hb);
+            updateBtn = new Button { Content = "Update", Style = (Style)FindResource("Accent"), Margin = new Thickness(0, 0, 8, 0), Visibility = pending != null ? Visibility.Visible : Visibility.Collapsed };
+            if (pending != null) updateBtn.Content = "Update to v" + pending.Version.ToString(2);
+            updateBtn.Click += (s, e) => InstallUpdate();
+            hb.Children.Add(updateBtn); hb.Children.Add(sessionBtn); hb.Children.Add(saveNow); head.Children.Add(hb);
             root.Children.Add(head);
             // status card
             var card = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(18, 14, 18, 14), Margin = new Thickness(0, 0, 0, 14) };
@@ -476,6 +488,12 @@ namespace HallowClips
             hi.Click += (s, e) => { S.UseHallowIcon = hi.IsChecked == true; S.Save(); CheckTrayHost(); }; set.Children.Add(hi);
             var ha = new CheckBox { Content = new TextBlock { Text = "Use the Hallow accent (the colour you pick in Hallow Toolkit)", TextWrapping = TextWrapping.Wrap }, IsChecked = S.UseHallowAccent, Style = (Style)FindResource("Switch") };
             ha.Click += (s, e) => { S.UseHallowAccent = ha.IsChecked == true; S.Save(); Dispatcher.BeginInvoke(new Action(ApplyAccent)); }; set.Children.Add(ha);
+            // v1.8: hotkeys and updates
+            var keys = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var upd = new Button { Content = "Check for updates", Style = (Style)FindResource("Btn") }; upd.Click += (s, e) => CheckForUpdate(true);
+            DockPanel.SetDock(upd, Dock.Right); keys.Children.Add(upd);
+            keys.Children.Add(new TextBlock { Text = "Hallow Clips " + Program.Version + "   \u00B7   Ctrl+Alt+S clip   \u00B7   Ctrl+Alt+R session   \u00B7   Ctrl+Alt+P screenshot   \u00B7   Ctrl+Alt+B marker", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center });
+            set.Children.Add(keys);
             root.Children.Add(set);
             // clips
             var ch = new DockPanel { Margin = new Thickness(0, 6, 0, 8) }; DockPanel.SetDock(ch, Dock.Top);
@@ -633,7 +651,7 @@ namespace HallowClips
             new Thread(() =>
             {
                 r.Stop();
-                string err; var f = Recorder.FinishSession(ff, Path.ChangeExtension(r.SessionFile, ".mkv"), out err);
+                var mk = marks.ToList(); string err; var f = Recorder.FinishSession(ff, Path.ChangeExtension(r.SessionFile, ".mkv"), mk, r.Started, out err);
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     finishing = false; SessionState();
@@ -776,6 +794,86 @@ namespace HallowClips
                 catch (Exception ex) { Status("Made " + r + " but couldn't copy it: " + ex.Message); }
             });
         }
+        // ---- v1.8: updates from GitHub (asks first; FFmpeg is never part of an update)
+        Button updateBtn; GhRelease pending;
+        void CheckForUpdate(bool manual)
+        {
+            if (Snap.On) return;
+            if (manual) Status("Checking GitHub for a newer Hallow Clips...");
+            new Thread(() =>
+            {
+                var r = Updater.Latest();
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    S.LastUpdateCheck = DateTime.Now.ToString("o"); S.Save();
+                    if (r == null) { if (manual) Status("Couldn't reach GitHub - try again later."); return; }
+                    if (!Updater.IsNewer(r)) { if (manual) Status("You have the newest version (v" + Program.Version + ")."); return; }
+                    pending = r; updateBtn.Content = "Update to v" + r.Version.ToString(2); updateBtn.Visibility = Visibility.Visible;
+                    updateBtn.ToolTip = (r.Notes ?? "").Length > 600 ? r.Notes.Substring(0, 600) + "..." : r.Notes;
+                    Status("Hallow Clips v" + r.Version.ToString(2) + " is out - click Update at the top (your clips and settings are kept).");
+                }));
+            }) { IsBackground = true }.Start();
+        }
+        void InstallUpdate()
+        {
+            if (pending == null) return;
+            if (session != null || finishing) { Status("Stop the session recording first, then update."); return; }
+            if (MessageBox.Show(this, "Install Hallow Clips v" + pending.Version.ToString(2) + " now?\n\nIt downloads from GitHub, checks the file, and reopens by itself. Your clips, settings and FFmpeg are kept.", "Update Hallow Clips", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            updateBtn.IsEnabled = false; updateBtn.Content = "Updating..."; var r = pending; S.Save();
+            new Thread(() =>
+            {
+                var err = Updater.Install(r);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (err != null) { Status(err); updateBtn.IsEnabled = true; updateBtn.Content = "Update to v" + r.Version.ToString(2); }
+                    else { rec.Stop(); Status("Installing the update - Hallow Clips reopens in a few seconds."); }   // the installer closes this copy
+                }));
+            }) { IsBackground = true }.Start();
+        }
+
+        // ---- v1.8: screenshot (Ctrl+Alt+P) and markers (Ctrl+Alt+B)
+        bool shotKeyOk, markKeyOk, shooting;
+        readonly List<DateTime> marks = new List<DateTime>();
+        // a short message: on Hallow Overlay's panel when it runs, otherwise our own pop-up
+        void Announce(string text)
+        {
+            new Thread(() =>
+            {
+                var r = Family.Send("Overlay", "flash " + text, 2000);
+                if (r == null || !(r == "ok" || r.StartsWith("ok "))) Dispatcher.BeginInvoke(new Action(() => toast.Flash(text)));
+            }) { IsBackground = true }.Start();
+        }
+        void Screenshot()
+        {
+            var ff = S.Ffmpeg; if (ff == null) { toast.Flash("Hallow Clips isn't set up yet"); return; }
+            if (shooting) return; shooting = true;
+            var g = Recorder.Safe(GameName); var dir = Path.Combine(S.ClipsFolder, g, "Screenshots"); var screen = S.Screen;
+            new Thread(() =>
+            {
+                string file = null, err = "";
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    file = ClipOps.Free(dir, g + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss"), ".png"); int exit;
+                    ClipOps.Run(ff, "-hide_banner -loglevel error -y -f lavfi -i ddagrab=output_idx=" + screen + ":framerate=30:draw_mouse=0 -frames:v 1 -vf hwdownload,format=bgra -update 1 \"" + file + "\"", 15000, out err, out exit);
+                    if (!File.Exists(file) || new FileInfo(file).Length == 0) { try { File.Delete(file); } catch { } file = null; }
+                }
+                catch (Exception ex) { err = ex.Message; file = null; }
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    shooting = false;
+                    if (file != null) { Announce("Screenshot saved"); Status("Screenshot saved: " + file); }
+                    else { toast.Flash("Couldn't take a screenshot"); Status("Screenshot failed: " + Family.OneLine(err)); }
+                }));
+            }) { IsBackground = true }.Start();
+        }
+        void Mark()
+        {
+            if (!rec.Running && session == null) { toast.Flash("Not recording right now"); return; }
+            marks.Add(DateTime.Now); marks.RemoveAll(m => m < DateTime.Now.AddHours(-12));
+            Announce("Marker added");
+        }
+
         // ---- v1.7: title, thumbnail, GIF, phone, highlight reel
         void TitleClip(string clip)
         {

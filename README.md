@@ -8,6 +8,8 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 - 15 s to 2 min, 30 / 60 fps, quality levels, any screen; clip list with thumbnails
 - **Highlight reel**: pick and order clips, joined with `-c copy` when the formats match, otherwise one GPU re-encode; optional crossfades and title card
 - Clip titles (MP4 title metadata, in the list and `status.json`), pick the thumbnail frame, GIF export (palettegen/paletteuse, up to 15 s, 320-640 px) and a 9:16 phone version under 50 MB
+- **Ctrl+Alt+P** screenshot (PNG in the game's Screenshots folder), **Ctrl+Alt+B** marker - markers become MP4 chapters and jump points in Trim
+- Updates itself from GitHub releases (asks first, checks the SHA-256; FFmpeg is never part of an update)
 - **Ctrl+Alt+R** records a whole session (start / stop) next to the replay buffer
 - H.264, or HEVC / AV1 for smaller files when FFmpeg and the graphics card can (checked with a one-frame test encode)
 - Optional space limit for the clips folder: the oldest non-favourites go to the Recycle Bin

@@ -38,7 +38,7 @@ namespace HallowClips
         }
 
         // ---- what's in a clip: length, video codec, number of sound tracks, and the keyframes (where a copy-cut can start)
-        public class Info { public double Duration, VideoDuration, Fps; public string Codec = ""; public int AudioTracks, Width, Height, SampleRate; public List<double> Keys = new List<double>(); }
+        public class Info { public double Duration, VideoDuration, Fps; public string Codec = ""; public int AudioTracks, Width, Height, SampleRate; public List<double> Keys = new List<double>(); public List<double> Marks = new List<double>(); public List<string> TrackTitles = new List<string>(); }
         public static Info Inspect(string ffmpeg, string clip)
         {
             var info = new Info(); var probe = Probe(ffmpeg); if (probe == null) return info;
@@ -57,6 +57,9 @@ namespace HallowClips
                 if (line.Contains("codec_type=audio")) { info.AudioTracks++; if (info.SampleRate == 0) int.TryParse(val("sample_rate"), out info.SampleRate); }
                 var d = System.Text.RegularExpressions.Regex.Match(line, "^duration=([0-9.]+)\\s*$"); if (d.Success) double.TryParse(d.Groups[1].Value, NumberStyles.Float, Inv, out info.Duration);
             }
+            // v1.8: chapters made from markers (all but the first, "Start")
+            var ch = Run(probe, "-v error -show_entries chapter=start_time -of csv=p=0 \"" + clip + "\"", 15000, out err, out exit) ?? "";
+            foreach (var line in ch.Split('\n')) { double t0; if (double.TryParse(line.Trim().Split(',')[0], NumberStyles.Float, Inv, out t0) && t0 > 0.1) info.Marks.Add(t0); }
             // packet flags (no decoding): K = keyframe
             var k = Run(probe, "-v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 \"" + clip + "\"", 30000, out err, out exit) ?? "";
             foreach (var line in k.Split('\n'))

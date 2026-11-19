@@ -12,12 +12,9 @@
 | **1.5** | One Hallow icon: open / menu / invoke / quit for Hallow Hub's tray menu, Use the Hallow icon (own icon hidden while Hub hosts), balloons through Hub |
 | **1.6** | Use the Hallow accent (theme.json, live), crash reports kept on this PC with a notice next start and lastCrash in status; FFmpeg never left running |
 | **1.7** | Highlight reel (copy or one GPU re-encode, crossfades, title card), clip titles and thumbnail picker, GIF and 9:16 phone exports |
+| **1.8** | Updates itself from GitHub (asks first, SHA-256, never FFmpeg), Ctrl+Alt+P screenshots, Ctrl+Alt+B markers as chapters |
 
 ## Next
-### 1.8 - Updates, screenshots and markers
-- Updates itself from GitHub (asks first, checks the SHA-256, never touches FFmpeg)
-- Screenshot hotkey (Ctrl+Alt+P) and a marker hotkey (Ctrl+Alt+B) - markers become chapters in clips and sessions
-
 ### 1.9 - Separate sound per app
 - Game, Discord (or other apps you pick) on their own tracks with Windows' per-app capture, next to everything + mic; falls back to today's capture on older Windows
 - Choose which sound tracks go into exports (Discord copy, phone version, highlight reel)

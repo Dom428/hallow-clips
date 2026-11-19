@@ -19,9 +19,9 @@ namespace HallowClips
         // exact label -> icon
         static readonly Dictionary<string, string> Labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             { "Save a clip now", "floppy-disk" }, { "Open clips folder", "folder-open" }, { "Play", "play" }, { "Show in folder", "folder-open" }, { "Delete", "trash-can" }, { "x", "xmark" }, { "OK", "check" }, { "Got it", "check" }, { "All release notes", "arrow-up-right-from-square" },
-            { "Favourite", "star" }, { "Trim", "scissors" }, { "Copy for Discord", "discord" }, { "Rename", "pen" }, { "Cancel", "xmark" }, { "Save trimmed copy", "scissors" }, { "Record session", "circle-dot" }, { "Show details", "eye" }, { "More", "ellipsis" }, { "Highlight reel", "film" }, { "Make highlight reel", "film" }, { "Make GIF", "image" }, { "Make phone version", "mobile-screen" }, { "Use this picture", "image" }, { "Save title", "heading" }, { "Up", "arrow-up" }, { "Down", "arrow-down" }, { "Open folder", "folder-open" }, { "Finishing...", "spinner" },
+            { "Favourite", "star" }, { "Trim", "scissors" }, { "Copy for Discord", "discord" }, { "Rename", "pen" }, { "Cancel", "xmark" }, { "Save trimmed copy", "scissors" }, { "Record session", "circle-dot" }, { "Show details", "eye" }, { "More", "ellipsis" }, { "Check for updates", "arrows-rotate" }, { "Updating...", "spinner" }, { "Highlight reel", "film" }, { "Make highlight reel", "film" }, { "Make GIF", "image" }, { "Make phone version", "mobile-screen" }, { "Use this picture", "image" }, { "Save title", "heading" }, { "Up", "arrow-up" }, { "Down", "arrow-down" }, { "Open folder", "folder-open" }, { "Finishing...", "spinner" },
         };
-        static readonly string[][] Prefixes = { new[] { "Set up FFmpeg", "download" }, new[] { "Stop recording", "circle-stop" } };
+        static readonly string[][] Prefixes = { new[] { "Set up FFmpeg", "download" }, new[] { "Stop recording", "circle-stop" }, new[] { "Update", "download" } };
         public static string ForLabel(string label)
         {
             if (string.IsNullOrEmpty(label)) return null;

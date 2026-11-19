@@ -31,12 +31,13 @@ namespace HallowClips
         [DataMember] public List<string> Favorites = new List<string>();   // v1.2: full paths of clips you starred
         [DataMember] public string Codec = "h264";       // v1.3: h264, hevc, av1
         [DataMember] public int SpaceLimitGB = 0;        // v1.3: 0 = no limit
+        [DataMember] public string LastUpdateCheck = "";  // v1.8
         [DataMember] public bool UseHallowAccent = true; // v1.6: the Hallow accent colour from theme.json
         [DataMember] public string LastCrashShown = "";  // v1.6: the crash report already told about
         [DataMember] public bool UseHallowIcon = true;   // v1.5: hide our tray icon while Hallow Hub hosts the family icon
         [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
         [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; CodecsFor = ""; Codecs = new List<string>(); }
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_DATA"); return !string.IsNullOrEmpty(t) ? t : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }   // tests use their own folder
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -201,12 +202,15 @@ namespace HallowClips
         }
 
         // joins the pieces covering the last `seconds` into one MP4 (no re-encoding, so it takes a moment and no GPU)
-        public string Save(int seconds, string name, out string error)
+        public string Save(int seconds, string name, out string error) { return Save(seconds, name, null, out error); }
+        // v1.8: marks = times you pressed the marker hotkey; those inside the clip become chapters
+        public string Save(int seconds, string name, List<DateTime> marks, out string error)
         {
             error = null;
             var since = DateTime.Now.AddSeconds(-seconds - 1);
             var segs = Directory.GetFiles(BufferDir, "seg*." + segExt).Select(f => new FileInfo(f)).Where(f => f.Length > 0 && f.LastWriteTime >= since).OrderBy(f => f.LastWriteTime).ToList();
             if (segs.Count == 0) { error = "Nothing recorded yet."; return null; }
+            var clipStart = segs[0].LastWriteTime.AddSeconds(-2);   // a finished piece is written up to its end; pieces are 2 s
             var dir = Path.Combine(S.ClipsFolder, Safe(name)); Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, Safe(name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".mp4");
             // copy the pieces first: FFmpeg keeps writing the newest one
@@ -216,7 +220,8 @@ namespace HallowClips
                 var list = new StringBuilder();
                 for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { File.Copy(segs[i].FullName, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
                 var lf = Path.Combine(tmp, "list.txt"); File.WriteAllText(lf, list.ToString());
-                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" -map 0 -c copy " + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")
+                var meta = Chapters(tmp, marks, clipStart, (DateTime.Now - clipStart).TotalSeconds);
+                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")
                     { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true });
                 var err = p.StandardError.ReadToEnd(); p.WaitForExit(30000);
                 if (!File.Exists(file) || new FileInfo(file).Length == 0) { error = "Saving failed: " + err.Trim(); return null; }
@@ -226,13 +231,30 @@ namespace HallowClips
         }
         // v1.3: a finished session recording (.mkv) becomes an MP4 next to it (no re-encoding). Also used for one left over
         // from a crash or a hard close. Returns the MP4, or null (the .mkv then stays, it plays too).
-        public static string FinishSession(string ffmpeg, string mkv, out string error)
+        // v1.8: chapters for markers (an FFmpeg metadata file), or null when none fall inside
+        public static string Chapters(string dir, List<DateTime> marks, DateTime start, double length)
+        {
+            if (marks == null) return null;
+            var t = marks.Select(m => (m - start).TotalSeconds).Where(s => s > 0.5 && s < length).OrderBy(s => s).ToList();
+            if (t.Count == 0) return null;
+            var sb = new StringBuilder(";FFMETADATA1\n"); var at = new List<double> { 0 }; at.AddRange(t);
+            for (int i = 0; i < at.Count; i++)
+            {
+                var end = i + 1 < at.Count ? at[i + 1] : length;
+                sb.Append("[CHAPTER]\nTIMEBASE=1/1000\nSTART=" + (long)(at[i] * 1000) + "\nEND=" + (long)(end * 1000) + "\ntitle=" + (i == 0 ? "Start" : "Marker " + i) + "\n");
+            }
+            var f = Path.Combine(dir, "chapters-" + Guid.NewGuid().ToString("N") + ".txt"); File.WriteAllText(f, sb.ToString()); return f;
+        }
+        public static string FinishSession(string ffmpeg, string mkv, out string error) { return FinishSession(ffmpeg, mkv, null, DateTime.MinValue, out error); }
+        public static string FinishSession(string ffmpeg, string mkv, List<DateTime> marks, DateTime started, out string error)
         {
             error = null; var mp4 = Path.ChangeExtension(mkv, ".mp4");
             if (!File.Exists(mkv) || new FileInfo(mkv).Length == 0) { try { File.Delete(mkv); } catch { } error = "Nothing was recorded."; return null; }
             var info = ClipOps.Inspect(ffmpeg, mkv);
             string err; int exit;
-            ClipOps.Run(ffmpeg, "-hide_banner -loglevel error -y -i \"" + mkv + "\" -map 0 -c copy " + (info.Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + mp4 + "\"", 3600000, out err, out exit);
+            var meta = marks != null && info.Duration > 0 ? Chapters(Path.GetTempPath(), marks, started, info.Duration) : null;
+            ClipOps.Run(ffmpeg, "-hide_banner -loglevel error -y -i \"" + mkv + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + (info.Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + mp4 + "\"", 3600000, out err, out exit);
+            if (meta != null) try { File.Delete(meta); } catch { }
             if (exit != 0 || !File.Exists(mp4) || new FileInfo(mp4).Length == 0) { try { File.Delete(mp4); } catch { } error = "Couldn't make the MP4 (" + Family.OneLine(err) + ") - the recording is kept as " + Path.GetFileName(mkv) + "."; return null; }
             try { File.Delete(mkv); } catch { }
             return mp4;
