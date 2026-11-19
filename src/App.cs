@@ -27,14 +27,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.4";
+        public const string Version = "1.5";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -115,7 +115,7 @@ namespace HallowClips
                 if (!exiting && S.TrayOnClose && !Snap.On)
                 {
                     e.Cancel = true; Hide();
-                    if (!toldTray && tray != null) { toldTray = true; tray.ShowBalloonTip(4000, "Hallow Clips", "Still running - Ctrl+Alt+S saves a clip while you play. Right-click the icon to quit.", WF.ToolTipIcon.None); }
+                    if (!toldTray && tray != null) { toldTray = true; Balloon("Hallow Clips", hostedByHub ? "Still running - Ctrl+Alt+S saves a clip while you play. It's in the Hallow icon's menu." : "Still running - Ctrl+Alt+S saves a clip while you play. Right-click the icon to quit."); }
                 }
                 else Quit();
             };
@@ -141,6 +141,7 @@ namespace HallowClips
             FindCodecs(); FinishLeftoverSessions();
             Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
             Family.Serve("Clips", Command);
+            var host = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) }; host.Tick += (s, e) => CheckTrayHost(); host.Start(); CheckTrayHost();
             // What's new: an update from 1.0 (which didn't remember versions) counts as seen 1.0 when FFmpeg was already set up
             if (string.IsNullOrEmpty(S.LastSeenVersion)) { S.LastSeenVersion = S.Ffmpeg != null ? "1.0" : Program.Version; S.Save(); }
             IsVisibleChanged += (s, e) => { if (IsVisible) Dispatcher.BeginInvoke(new Action(ShowWhatsNew), DispatcherPriority.ApplicationIdle); };
@@ -174,7 +175,67 @@ namespace HallowClips
                 if (!done.WaitOne(35000)) return "error Saving is taking too long";
                 return file != null ? "ok " + Family.Json(new Dictionary<string, object> { { "file", file } }) : "error " + Family.OneLine(err ?? "Couldn't save the clip");
             }
+            // v1.5: Hallow Hub's one tray icon - open, our menu items, run one, quit
+            if (cmd == "open") return OnUi(() => ShowFromTray()) ? "ok" : "error busy";
+            if (cmd == "menu")
+            {
+                List<object> items = null;
+                if (!OnUi(() => items = MenuItems())) return "error busy";
+                return "ok " + Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "items", items } });
+            }
+            if (cmd == "invoke")
+            {
+                var id = sp < 0 ? "" : line.Substring(sp + 1).Trim(); string err = null;
+                if (!OnUi(() => err = Invoke(id))) return "error busy";
+                return err == null ? "ok" : "error " + err;
+            }
+            if (cmd == "quit") { new Timer(_ => Dispatcher.BeginInvoke(new Action(Quit)), null, 300, Timeout.Infinite); return "ok"; }   // reply first, then exit
             return "error unknown command";
+        }
+        bool OnUi(Action a) { var op = Dispatcher.BeginInvoke(a); return op.Wait(TimeSpan.FromSeconds(5)) == DispatcherOperationStatus.Completed; }
+        List<object> MenuItems()
+        {
+            Func<string, string, object, Dictionary<string, object>> it = (id, label, chk) => { var d = new Dictionary<string, object> { { "id", id }, { "label", label } }; if (chk != null) d["checked"] = chk; return d; };
+            var save = it("save", "Save clip", null); if (!rec.Running) save["enabled"] = false;
+            var record = it("record", "Record session", session != null); if (finishing || S.Ffmpeg == null) record["enabled"] = false;
+            return new List<object> { save, record, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
+        }
+        string Invoke(string id)
+        {
+            if (id == "save") { SaveClip(null); return null; }
+            if (id == "record") { ToggleSession(); return null; }
+            if (id == "replay") { S.On = !S.On; S.Save(); if (replaySwitch != null) replaySwitch.IsChecked = S.On; Restart(); return null; }
+            if (id == "folder") { try { Directory.CreateDirectory(S.ClipsFolder); Process.Start("explorer.exe", "\"" + S.ClipsFolder + "\""); return null; } catch (Exception e) { return Family.OneLine(e.Message); } }
+            return "unknown item";
+        }
+        CheckBox replaySwitch;
+
+        // ---- v1.5: "Use the Hallow icon" - while Hallow Hub hosts the family icon, ours is hidden (never both gone)
+        bool hostedByHub, checkingHost;
+        static string HubPipe { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_HUB"); return string.IsNullOrEmpty(t) ? "Hub" : t; } }   // tests use a stand-in Hub
+        void CheckTrayHost()
+        {
+            if (tray == null || checkingHost) return;
+            if (!S.UseHallowIcon) { SetHosted(false); return; }
+            checkingHost = true;
+            new Thread(() =>
+            {
+                var r = Family.Send(HubPipe, "tray-host", 1500);
+                bool on = r != null && r.StartsWith("ok ") && System.Text.RegularExpressions.Regex.IsMatch(r, "\"on\"\\s*:\\s*true");
+                Dispatcher.BeginInvoke(new Action(() => { checkingHost = false; SetHosted(on && S.UseHallowIcon); }));
+            }) { IsBackground = true }.Start();
+        }
+        void SetHosted(bool on) { hostedByHub = on; if (tray != null && !exiting) tray.Visible = !on; WriteStatus(false); }
+        // a tray balloon - through Hub's icon while ours is hidden (ours shows briefly if Hub doesn't answer)
+        void Balloon(string title, string text)
+        {
+            if (tray == null) return;
+            if (!hostedByHub) { tray.ShowBalloonTip(4000, title, text, WF.ToolTipIcon.None); return; }
+            new Thread(() =>
+            {
+                var r = Family.Send(HubPipe, "notify Clips\t" + title + "\t" + text, 3000);
+                if (r == null || !(r == "ok" || r.StartsWith("ok "))) Dispatcher.BeginInvoke(new Action(() => { tray.Visible = true; tray.ShowBalloonTip(4000, title, text, WF.ToolTipIcon.None); }));   // the next check hides it again
+            }) { IsBackground = true }.Start();
         }
 
         // ---- status.json: what other Hallow apps read (Hub's game page, Toolkit's Discord post)
@@ -205,14 +266,14 @@ namespace HallowClips
             }
             var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
-                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "clips", clips } });
+                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "clips", clips } });
         }
         string lastStatusKey;
         // writes status.json when something changed (force: the clip list changed)
         void WriteStatus(bool force)
         {
             if (Snap.On) return;
-            var key = rec.Running + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder;
+            var key = rec.Running + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder + "|" + hostedByHub;
             if (!force && key == lastStatusKey) return;
             lastStatusKey = key;
             if (statusSoon == null) { statusSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) }; statusSoon.Tick += (s, e) => { statusSoon.Stop(); var json = StatusJson(); new Thread(() => Family.WriteStatus(json)) { IsBackground = true }.Start(); }; }
@@ -336,16 +397,19 @@ namespace HallowClips
                 () => S.SpaceLimitGB.ToString(), v => { S.SpaceLimitGB = int.Parse(v); Dispatcher.BeginInvoke(new Action(EnforceLimit)); }, false);
             ((FrameworkElement)limit).ToolTip = "When the clips folder grows past this, the oldest clips that aren't favourites go to the Recycle Bin.";
             set.Children.Add(limit);
-            Action<string, bool, Action<bool>> sw = (text, on, setv) =>
+            Func<string, bool, Action<bool>, CheckBox> sw = (text, on, setv) =>
             {
                 var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
-                c.Click += (s, e) => { setv(c.IsChecked == true); S.Save(); Restart(); }; set.Children.Add(c);
+                c.Click += (s, e) => { setv(c.IsChecked == true); S.Save(); Restart(); }; set.Children.Add(c); return c;
             };
-            sw("Instant replay on", S.On, v => S.On = v);
+            replaySwitch = sw("Instant replay on", S.On, v => S.On = v);
             sw("Only while a game is running (otherwise it records your desktop too)", S.OnlyInGame, v => S.OnlyInGame = v);
             sw("Record my mic on its own track", S.Mic, v => S.Mic = v);
             sw("Keep running in the tray when I close this window", S.TrayOnClose, v => S.TrayOnClose = v);
             sw("Start with Windows (in the tray)", StartsWithWindows(), v => SetStartWithWindows(v));
+            // v1.5: one tray icon for the whole Hallow family - Hallow Hub hosts it when it runs
+            var hi = new CheckBox { Content = new TextBlock { Text = "Use the Hallow icon (when Hallow Hub runs, Clips is in its tray menu instead of having its own icon)", TextWrapping = TextWrapping.Wrap }, IsChecked = S.UseHallowIcon, Style = (Style)FindResource("Switch") };
+            hi.Click += (s, e) => { S.UseHallowIcon = hi.IsChecked == true; S.Save(); CheckTrayHost(); }; set.Children.Add(hi);
             root.Children.Add(set);
             // clips
             var ch = new DockPanel { Margin = new Thickness(0, 6, 0, 8) }; DockPanel.SetDock(ch, Dock.Top);

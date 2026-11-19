@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.5
+- One Hallow icon: with Hallow Hub running, Clips is in Hub's tray menu (Save clip, Record session, Replay buffer,
+  Open clips folder) instead of having its own icon. Turn off "Use the Hallow icon" to keep your own.
+
 WHAT'S NEW IN 1.4
 - Hallow family: save a clip from Hallow Remote on your phone; Hallow Overlay shows Clip saved.
 - Your clips of a game on its Hallow Hub page, and an opt-in Discord post of new clips through Hallow Toolkit
@@ -39,6 +43,8 @@ HOW IT WORKS
   Windows' own player needs the HEVC / AV1 Video Extension (Microsoft Store) for those.
 
 GOOD TO KNOW
+- With Hallow Hub running, Clips has no tray icon of its own: it's in the Hallow icon's menu (Save clip, Record session,
+  Replay buffer, Open clips folder, Exit). Turn off "Use the Hallow icon" in the app to get its own icon back.
 - The buffer only exists on your PC and is overwritten constantly; nothing is uploaded anywhere.
 - Deleting a clip in the app sends it to the Recycle Bin. The space limit (off unless you pick one) does the same with
   the oldest clips that aren't favourites when the folder grows past it.

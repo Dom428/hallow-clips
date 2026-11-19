@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.5", new[] { "One Hallow icon: when Hallow Hub runs, Clips lives in Hub's tray menu (Save clip, Record session, Replay buffer, Open clips folder) instead of its own icon", "Turn it off in settings: Use the Hallow icon" }),
             Tuple.Create("1.4", new[] { "Hallow family: save a clip from Hallow Remote on your phone, and Hallow Overlay shows Clip saved", "Your clips of a game on its Hallow Hub page, and an opt-in Discord post of new clips through Hallow Toolkit (the webhook stays on this PC)" }),
             Tuple.Create("1.3", new[] { "Record session (Ctrl+Alt+R): record everything until you stop, next to the replay", "Video format: HEVC or AV1 for smaller files, when your graphics card can", "Space limit for the clips folder (off unless you pick one): the oldest clips that aren't favourites go to the Recycle Bin" }),
             Tuple.Create("1.2", new[] { "Trim a clip (scissors) - no re-encoding, so it's instant and keeps full quality", "Copy for Discord: a copy under 10 MB, ready to paste with Ctrl+V", "Rename clips and star your favourites" }),
