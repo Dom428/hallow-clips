@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.6", new[] { "Use the Hallow accent: the colour you pick in Hallow Toolkit replaces Clips' orange, right away", "If Clips ever crashes, a report is kept on this PC (never sent) and you're told next time; recording always stops with it" }),
             Tuple.Create("1.5", new[] { "One Hallow icon: when Hallow Hub runs, Clips lives in Hub's tray menu (Save clip, Record session, Replay buffer, Open clips folder) instead of its own icon", "Turn it off in settings: Use the Hallow icon" }),
             Tuple.Create("1.4", new[] { "Hallow family: save a clip from Hallow Remote on your phone, and Hallow Overlay shows Clip saved", "Your clips of a game on its Hallow Hub page, and an opt-in Discord post of new clips through Hallow Toolkit (the webhook stays on this PC)" }),
             Tuple.Create("1.3", new[] { "Record session (Ctrl+Alt+R): record everything until you stop, next to the replay", "Video format: HEVC or AV1 for smaller files, when your graphics card can", "Space limit for the clips folder (off unless you pick one): the oldest clips that aren't favourites go to the Recycle Bin" }),
@@ -39,14 +40,14 @@ namespace HallowClips
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text");
             FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5; WindowStartupLocation = WindowStartupLocation.CenterOwner;
             var sp = new StackPanel { Margin = new Thickness(26, 20, 26, 20) };
-            sp.Children.Add(new TextBlock { Text = "What's new in Hallow Clips " + Program.Version, FontSize = 20, FontWeight = FontWeights.Bold, Foreground = B("#F07820"), Margin = new Thickness(0, 0, 0, 12) });
+            sp.Children.Add(new TextBlock { Text = "What's new in Hallow Clips " + Program.Version, FontSize = 20, FontWeight = FontWeights.Bold, Foreground = Accent.Brush, Margin = new Thickness(0, 0, 0, 12) });
             foreach (var v in items)
             {
                 sp.Children.Add(new TextBlock { Text = v.Item1, FontWeight = FontWeights.Bold, Foreground = B("#A98BE0"), Margin = new Thickness(0, 6, 0, 3) });
                 foreach (var line in v.Item2)
                 {
                     var d = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
-                    var dot = new TextBlock { Text = "\u2022", Foreground = B("#F07820"), Width = 16, FontWeight = FontWeights.Bold }; DockPanel.SetDock(dot, Dock.Left);
+                    var dot = new TextBlock { Text = "\u2022", Foreground = Accent.Brush, Width = 16, FontWeight = FontWeights.Bold }; DockPanel.SetDock(dot, Dock.Left);
                     d.Children.Add(dot); d.Children.Add(new TextBlock { Text = line, TextWrapping = TextWrapping.Wrap });
                     sp.Children.Add(d);
                 }

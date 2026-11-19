@@ -27,19 +27,23 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.5";
+        public const string Version = "1.6";
         [STAThread]
         public static void Main(string[] args)
         {
             int ci = Array.IndexOf(args, "--cmd");   // Hallow family: send a command to the running copy, print the reply
             if (ci >= 0) { Environment.Exit(Family.RunCmd(ci + 1 < args.Length ? string.Join(" ", args.Skip(ci + 1)) : "")); return; }
+            // v1.6: crash reports (kept on this PC); exiting right after means no Windows error box, and the job ends FFmpeg
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => { Crash.Write(e.ExceptionObject as Exception, "app"); Environment.Exit(1); };
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) => { Crash.Write(e.Exception, "background task"); e.SetObserved(); };
+            Accent.Hex = Accent.Pick(ClipSettings.Load().UseHallowAccent);   // v1.6: the Hallow accent, before the theme loads
             int si = Array.IndexOf(args, "--snap");
             if (si >= 0 && si + 1 < args.Length)
             {
@@ -52,15 +56,20 @@ namespace HallowClips
             var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\HallowClipsShow");
             if (!created) { showEvent.Set(); return; }
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; LoadTheme(app);
+            app.DispatcherUnhandledException += (s, e) => { Crash.Write(e.Exception, "window"); e.Handled = true; Environment.Exit(1); };
             var w = new MainWindow(args.Contains("--tray"));
             new Thread(() => { while (showEvent.WaitOne()) w.Dispatcher.BeginInvoke(new Action(w.ShowFromTray)); }) { IsBackground = true }.Start();
             app.Run();
             GC.KeepAlive(mutex);
         }
-        static void LoadTheme(Application app)
+        public static void LoadTheme(Application app)
         {
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("HallowClips.Theme.xaml"))
-                app.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Load(s));
+            string xaml; using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("HallowClips.Theme.xaml")) using (var r = new StreamReader(s)) xaml = r.ReadToEnd();
+            using (var m = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(Accent.Themed(xaml))))
+            {
+                var d = (ResourceDictionary)XamlReader.Load(m);
+                app.Resources.MergedDictionaries.Clear(); app.Resources.MergedDictionaries.Add(d);
+            }
         }
     }
 
@@ -71,18 +80,19 @@ namespace HallowClips
         [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
         readonly TextBlock text = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
         readonly DispatcherTimer hide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        readonly FrameworkElement ic; readonly Border frame;
         public Toast()
         {
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; ShowInTaskbar = false; ShowActivated = false; SizeToContent = SizeToContent.WidthAndHeight; FontFamily = new FontFamily("Segoe UI");
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            var ic = Icons.Make("circle-play", 16, new SolidColorBrush(Color.FromRgb(0xF0, 0x78, 0x20))); ic.Margin = new Thickness(0, 0, 10, 0); sp.Children.Add(ic); sp.Children.Add(text);
-            Content = new Border { Background = new SolidColorBrush(Color.FromArgb(235, 0x1C, 0x17, 0x24)), BorderBrush = new SolidColorBrush(Color.FromRgb(0xF0, 0x78, 0x20)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 10, 18, 10), Child = sp };
+            ic = Icons.Make("circle-play", 16, Accent.Brush); ic.Margin = new Thickness(0, 0, 10, 0); sp.Children.Add(ic); sp.Children.Add(text);
+            Content = frame = new Border { Background = new SolidColorBrush(Color.FromArgb(235, 0x1C, 0x17, 0x24)), BorderBrush = Accent.Brush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 10, 18, 10), Child = sp };
             hide.Tick += (s, e) => { hide.Stop(); Hide(); };
             SourceInitialized += (s, e) => { var h = new WindowInteropHelper(this).Handle; SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x20 | 0x80 | 0x08000000); };
         }
         public void Flash(string msg)
         {
-            text.Text = msg; if (!IsVisible) Show(); UpdateLayout();
+            ((System.Windows.Shapes.Path)ic).Fill = Accent.Brush; frame.BorderBrush = Accent.Brush;   // v1.6: follows the Hallow accent
             Left = SystemParameters.PrimaryScreenWidth - ActualWidth - 20; Top = 20; hide.Stop(); hide.Start();
         }
     }
@@ -145,8 +155,54 @@ namespace HallowClips
             // What's new: an update from 1.0 (which didn't remember versions) counts as seen 1.0 when FFmpeg was already set up
             if (string.IsNullOrEmpty(S.LastSeenVersion)) { S.LastSeenVersion = S.Ffmpeg != null ? "1.0" : Program.Version; S.Save(); }
             IsVisibleChanged += (s, e) => { if (IsVisible) Dispatcher.BeginInvoke(new Action(ShowWhatsNew), DispatcherPriority.ApplicationIdle); };
+            WatchAccent();
+            IsVisibleChanged += (s, e) => { if (IsVisible) Dispatcher.BeginInvoke(new Action(ShowCrashNotice), DispatcherPriority.ApplicationIdle); };
+            int crashIn; if (int.TryParse(Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_CRASH"), out crashIn))   // tests only: crash on purpose
+            { var ct = new DispatcherTimer { Interval = TimeSpan.FromSeconds(crashIn) }; ct.Tick += (s, e) => { throw new InvalidOperationException("Test crash (HALLOWCLIPS_TEST_CRASH)"); }; ct.Start(); }
             if (!startHidden) Show();
             Dispatcher.BeginInvoke(new Action(Decide), DispatcherPriority.ApplicationIdle);
+        }
+
+        // ---- v1.6: the Hallow accent - follows theme.json live (debounced), Clips' own orange when off or missing
+        FileSystemWatcher accentWatch; DispatcherTimer accentSoon, accentRetry;
+        void WatchAccent()
+        {
+            accentSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) }; accentSoon.Tick += (s, e) => { accentSoon.Stop(); ApplyAccent(); };
+            accentRetry = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) }; accentRetry.Tick += (s, e) => StartAccentWatch(); accentRetry.Start();
+            StartAccentWatch();
+        }
+        void StartAccentWatch()
+        {
+            if (accentWatch != null) return;
+            try
+            {
+                var dir = Path.GetDirectoryName(Accent.FilePath); if (!Directory.Exists(dir)) return;   // tried again every 30 s
+                var w = new FileSystemWatcher(dir, Path.GetFileName(Accent.FilePath)) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.CreationTime };
+                FileSystemEventHandler h = (s, e) => Dispatcher.BeginInvoke(new Action(() => { accentSoon.Stop(); accentSoon.Start(); }));
+                w.Changed += h; w.Created += h; w.Deleted += h; w.Renamed += (s, e) => h(s, null);
+                w.EnableRaisingEvents = true; accentWatch = w; accentRetry.Stop();
+                ApplyAccent();   // it may have changed while nobody watched
+            }
+            catch { }
+        }
+        void ApplyAccent()
+        {
+            try
+            {
+                var hex = Accent.Pick(S.UseHallowAccent); if (hex == Accent.Hex) return;
+                Accent.Hex = hex; Program.LoadTheme(Application.Current);
+                var st = statusText != null ? statusText.Text : ""; Content = Build(); UpdateState(); FillClips(); SessionState(); Status(st);
+            }
+            catch { }
+        }
+        // ---- v1.6: after a crash, a notice once per report (when the window is open)
+        void ShowCrashNotice()
+        {
+            if (!IsVisible || Snap.On) return;
+            var f = Crash.Files().FirstOrDefault(); if (f == null || f.Name == S.LastCrashShown) return;
+            S.LastCrashShown = f.Name; S.Save();
+            if (f.LastWriteTime < DateTime.Now.AddDays(-30)) return;
+            new CrashNotice(f.FullName) { Owner = this }.Show();
         }
         bool hotkeyOk, sessionKeyOk;
         void ShowWhatsNew()
@@ -266,7 +322,7 @@ namespace HallowClips
             }
             var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
-                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "clips", clips } });
+                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "lastCrash", Crash.Last().HasValue ? Family.Time(Crash.Last().Value) : null }, { "clips", clips } });
         }
         string lastStatusKey;
         // writes status.json when something changed (force: the clip list changed)
@@ -332,7 +388,7 @@ namespace HallowClips
             var head = new DockPanel { Margin = new Thickness(0, 0, 0, 14) }; DockPanel.SetDock(head, Dock.Top);
             var title = new StackPanel { Orientation = Orientation.Horizontal };
             try { title.Children.Add(new Image { Source = AppIcon(), Width = 30, Height = 30, Margin = new Thickness(0, 0, 10, 0) }); } catch { }
-            title.Children.Add(new TextBlock { Text = "HALLOW", FontSize = 22, FontWeight = FontWeights.Bold, Foreground = B("#F07820"), VerticalAlignment = VerticalAlignment.Center });
+            title.Children.Add(new TextBlock { Text = "HALLOW", FontSize = 22, FontWeight = FontWeights.Bold, Foreground = Accent.Brush, VerticalAlignment = VerticalAlignment.Center });
             title.Children.Add(new TextBlock { Text = " CLIPS", FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(title, Dock.Left); head.Children.Add(title);
             var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), ToolTip = "Same as Ctrl+Alt+S" };
@@ -410,6 +466,8 @@ namespace HallowClips
             // v1.5: one tray icon for the whole Hallow family - Hallow Hub hosts it when it runs
             var hi = new CheckBox { Content = new TextBlock { Text = "Use the Hallow icon (when Hallow Hub runs, Clips is in its tray menu instead of having its own icon)", TextWrapping = TextWrapping.Wrap }, IsChecked = S.UseHallowIcon, Style = (Style)FindResource("Switch") };
             hi.Click += (s, e) => { S.UseHallowIcon = hi.IsChecked == true; S.Save(); CheckTrayHost(); }; set.Children.Add(hi);
+            var ha = new CheckBox { Content = new TextBlock { Text = "Use the Hallow accent (the colour you pick in Hallow Toolkit)", TextWrapping = TextWrapping.Wrap }, IsChecked = S.UseHallowAccent, Style = (Style)FindResource("Switch") };
+            ha.Click += (s, e) => { S.UseHallowAccent = ha.IsChecked == true; S.Save(); Dispatcher.BeginInvoke(new Action(ApplyAccent)); }; set.Children.Add(ha);
             root.Children.Add(set);
             // clips
             var ch = new DockPanel { Margin = new Thickness(0, 6, 0, 8) }; DockPanel.SetDock(ch, Dock.Top);
@@ -498,7 +556,7 @@ namespace HallowClips
                 play.Click += (s, e) => { try { Process.Start(new ProcessStartInfo(fi.FullName) { UseShellExecute = true }); } catch { } };
                 bool fav = S.IsFavorite(fi.FullName);
                 var star = ib("Favourite", fav ? "Favourite - click to unmark" : "Mark as a favourite (never removed by the space limit)");
-                star.Foreground = fav ? B("#F07820") : (Brush)FindResource("Muted");
+                star.Foreground = fav ? Accent.Brush : (Brush)FindResource("Muted");
                 star.Click += (s, e) => { S.SetFavorite(fi.FullName, !S.IsFavorite(fi.FullName)); S.Save(); FillClips(); };
                 var trim = ib("Trim", "Trim - keep only the best part (no re-encoding)"); trim.Click += (s, e) => TrimClip(fi.FullName);
                 var discord = ib("Copy for Discord", "Copy for Discord - a smaller copy under 10 MB, ready to paste"); discord.Click += (s, e) => CopyForDiscord(fi.FullName);
@@ -760,6 +818,7 @@ namespace HallowClips
         {
             Snap.Save(this, System.IO.Path.Combine(dir, "main.png"), 820, 820);
             Snap.Save(new WhatsNewWindow(WhatsNew.Notes.ToList()), System.IO.Path.Combine(dir, "whatsnew.png"), 560, 0);
+            Snap.Save(new CrashNotice(System.IO.Path.Combine(Crash.Dir, "2026-11-19 20-00-00.txt")), System.IO.Path.Combine(dir, "crash.png"), 520, 0);
             var clip = RecentClips(1).FirstOrDefault();
             if (clip != null)
             {

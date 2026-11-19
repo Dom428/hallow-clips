@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.6
+- Use the Hallow accent: the colour you pick in Hallow Toolkit replaces Clips' orange, right away.
+- If Clips ever crashes, a report stays on this PC (never sent) and you're told next time. Recording always stops with it.
+
 WHAT'S NEW IN 1.5
 - One Hallow icon: with Hallow Hub running, Clips is in Hub's tray menu (Save clip, Record session, Replay buffer,
   Open clips folder) instead of having its own icon. Turn off "Use the Hallow icon" to keep your own.
@@ -43,6 +47,9 @@ HOW IT WORKS
   Windows' own player needs the HEVC / AV1 Video Extension (Microsoft Store) for those.
 
 GOOD TO KNOW
+- If Hallow Clips ever crashes, a report is saved in %LOCALAPPDATA%\HallowClips\crashes (only on your PC, never sent)
+  and the app tells you next time. Recording always stops with the app.
+- The accent colour follows the one you pick in Hallow Toolkit (turn off "Use the Hallow accent" to keep orange).
 - With Hallow Hub running, Clips has no tray icon of its own: it's in the Hallow icon's menu (Save clip, Record session,
   Replay buffer, Open clips folder, Exit). Turn off "Use the Hallow icon" in the app to get its own icon back.
 - The buffer only exists on your PC and is overwritten constantly; nothing is uploaded anywhere.

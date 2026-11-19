@@ -32,7 +32,7 @@ namespace HallowClips
             b.Click += (s, e) => ok();
             foot.Children.Add(cancel); foot.Children.Add(b); return foot;
         }
-        protected TextBlock Heading(string text) { return new TextBlock { Text = text, FontSize = 20, FontWeight = FontWeights.Bold, Foreground = B("#F07820"), Margin = new Thickness(0, 0, 0, 6) }; }
+        protected TextBlock Heading(string text) { return new TextBlock { Text = text, FontSize = 20, FontWeight = FontWeights.Bold, Foreground = Accent.Brush, Margin = new Thickness(0, 0, 0, 6) }; }
     }
 
     // ---- Trim: pick where the clip starts (snaps to a keyframe, so nothing is re-encoded) and where it ends
@@ -58,7 +58,7 @@ namespace HallowClips
             {
                 var c = new StackPanel();
                 var h = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
-                h.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 8, 0) }); t.Foreground = B("#F07820"); t.FontWeight = FontWeights.SemiBold; h.Children.Add(t);
+                h.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 8, 0) }); t.Foreground = Accent.Brush; t.FontWeight = FontWeights.SemiBold; h.Children.Add(t);
                 c.Children.Add(h); c.Children.Add(pic); return c;
             };
             var c0 = col("Starts at", startPic, startText); var c1 = col("Ends at", endPic, endText); c1.HorizontalAlignment = HorizontalAlignment.Right;

@@ -22,6 +22,7 @@ Uses [FFmpeg](https://ffmpeg.org) (LGPL build from BtbN/FFmpeg-Builds), download
 - `%LOCALAPPDATA%\HallowClips\status.json`: recording state, current game (name and install folder), clip length, folder and the 30 newest clips (file, game, the game's install folder, time, size, length, thumbnail, favourite). Written atomically when something changes.
 - After a save, Hallow Overlay shows *Clip saved* when it runs.
 - v1.5 One Hallow icon: `open`, `menu` (Save clip, Record session, Replay buffer, Open clips folder), `invoke <id>`, `quit`. With *Use the Hallow icon* on (default), Clips asks Hub `tray-host` every 5 s and hides its own tray icon while Hub hosts the family icon; balloons then go through Hub `notify`. `status.json` has `trayHosted`.
+- v1.6: *Use the Hallow accent* (default on) takes the accent from `%APPDATA%\Hallow\theme.json` (Hallow Toolkit) and follows it live. Crash reports go to `%LOCALAPPDATA%\HallowClips\crashes` (newest 20, never sent); `status` has `lastCrash`.
 - Used by: Hallow Remote (save a clip from your phone), Hallow Overlay (*Clip saved*), Hallow Hub (this game's clips on its page), Hallow Toolkit (opt-in Discord post of new clips - the webhook stays in Toolkit).
 
 Built with the C# compiler that ships with Windows (.NET Framework 4.8): run `build.ps1`. No admin needed.
