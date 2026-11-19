@@ -27,14 +27,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.3";
+        public const string Version = "1.4";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -192,15 +192,20 @@ namespace HallowClips
         }
         string StatusJson()
         {
+            // v1.4: a clip's folder is its game's name made safe for Windows ("Warcraft III: Reforged" -> "Warcraft III_ Reforged");
+            // other apps get the real name back, and the install folder so they can match a game whose name differs
+            var byFolder = new Dictionary<string, Game>(StringComparer.OrdinalIgnoreCase);
+            foreach (var g in games) { var k = Recorder.Safe(g.Name); if (!byFolder.ContainsKey(k)) byFolder[k] = g; }
             var clips = new List<object>();
             foreach (var f in RecentClips(30))
             {
-                var jpg = ThumbPath(f.FullName);
-                clips.Add(new Dictionary<string, object> { { "file", f.FullName }, { "game", f.Directory.Name }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length },
+                var jpg = ThumbPath(f.FullName); Game g; byFolder.TryGetValue(f.Directory.Name, out g);
+                clips.Add(new Dictionary<string, object> { { "file", f.FullName }, { "game", g != null ? g.Name : f.Directory.Name }, { "installDir", g != null ? g.InstallDir : null }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length },
                     { "durationSec", DurationOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", S.IsFavorite(f.FullName) } });
             }
+            var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
-                { "recording", rec.Running }, { "game", Current != null ? GameName : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "clips", clips } });
+                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "clips", clips } });
         }
         string lastStatusKey;
         // writes status.json when something changed (force: the clip list changed)

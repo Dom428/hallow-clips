@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.4
+- Hallow family: save a clip from Hallow Remote on your phone; Hallow Overlay shows Clip saved.
+- Your clips of a game on its Hallow Hub page, and an opt-in Discord post of new clips through Hallow Toolkit
+  (the webhook stays in Toolkit on this PC).
+
 WHAT'S NEW IN 1.3
 - Record session (Ctrl+Alt+R): records everything until you stop, next to the instant replay.
 - Video format: HEVC or AV1 for smaller files, offered when your graphics card can.

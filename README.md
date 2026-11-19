@@ -19,8 +19,9 @@ Uses [FFmpeg](https://ffmpeg.org) (LGPL build from BtbN/FFmpeg-Builds), download
 
 - Named pipe `HallowFamily.Clips.<user>` (this Windows user only, never over the network): one line in, one line out. `ping`, `status`, `save` (replies `ok {"file":"..."}` or `error Nothing recorded yet`).
 - `HallowClips.exe --cmd "save"` sends a command to the running copy and prints the reply (exit code 0 ok, 1 error, 2 not running).
-- `%LOCALAPPDATA%\HallowClips\status.json`: recording state, current game, clip length, folder and the 30 newest clips (file, game, time, size, length, thumbnail, favourite). Written atomically when something changes.
+- `%LOCALAPPDATA%\HallowClips\status.json`: recording state, current game (name and install folder), clip length, folder and the 30 newest clips (file, game, the game's install folder, time, size, length, thumbnail, favourite). Written atomically when something changes.
 - After a save, Hallow Overlay shows *Clip saved* when it runs.
+- Used by: Hallow Remote (save a clip from your phone), Hallow Overlay (*Clip saved*), Hallow Hub (this game's clips on its page), Hallow Toolkit (opt-in Discord post of new clips - the webhook stays in Toolkit).
 
 Built with the C# compiler that ships with Windows (.NET Framework 4.8): run `build.ps1`. No admin needed.
 
