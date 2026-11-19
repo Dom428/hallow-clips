@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.7", new[] { "Highlight reel: tick clips, put them in order and join them into one video - with crossfades and a title card if you like", "Clip titles and your own thumbnail picture (the ... button)", "Export a GIF, or a 9:16 phone version for TikTok, Shorts and Reels" }),
             Tuple.Create("1.6", new[] { "Use the Hallow accent: the colour you pick in Hallow Toolkit replaces Clips' orange, right away", "If Clips ever crashes, a report is kept on this PC (never sent) and you're told next time; recording always stops with it" }),
             Tuple.Create("1.5", new[] { "One Hallow icon: when Hallow Hub runs, Clips lives in Hub's tray menu (Save clip, Record session, Replay buffer, Open clips folder) instead of its own icon", "Turn it off in settings: Use the Hallow icon" }),
             Tuple.Create("1.4", new[] { "Hallow family: save a clip from Hallow Remote on your phone, and Hallow Overlay shows Clip saved", "Your clips of a game on its Hallow Hub page, and an opt-in Discord post of new clips through Hallow Toolkit (the webhook stays on this PC)" }),

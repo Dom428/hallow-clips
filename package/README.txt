@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.7
+- Highlight reel: tick clips, put them in order and join them into one video (crossfades and a title card if you like).
+- Clip titles and your own thumbnail picture (the ... button on a clip).
+- Export a GIF, or a 9:16 phone version for TikTok, Shorts and Reels.
+
 WHAT'S NEW IN 1.6
 - Use the Hallow accent: the colour you pick in Hallow Toolkit replaces Clips' orange, right away.
 - If Clips ever crashes, a report stays on this PC (never sent) and you're told next time. Recording always stops with it.
@@ -42,6 +47,8 @@ HOW IT WORKS
 - Your game sound and your mic are on separate tracks (turn the mic off in the app).
 - Recording runs on your graphics card (NVIDIA, AMD or Intel), so games barely notice.
 - 15 s to 2 min clips, 30 or 60 fps, three quality levels, pick your screen.
+- Highlight reel (above your clips): tick clips, order them, join them into one video in the Highlights folder.
+- The ... button on a clip: set a title, pick its thumbnail, export a GIF or a 9:16 phone version.
 - Ctrl+Alt+R (or Record session) records everything until you press it again - saved as an MP4 in the same folder.
 - Video format: H.264 plays everywhere; HEVC and AV1 make smaller files (only offered when your graphics card can).
   Windows' own player needs the HEVC / AV1 Video Extension (Microsoft Store) for those.

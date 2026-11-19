@@ -10,6 +10,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -27,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.6.0.0")]
-[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
+[assembly: AssemblyFileVersion("1.7.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.6";
+        public const string Version = "1.7";
         [STAThread]
         public static void Main(string[] args)
         {
@@ -301,6 +302,13 @@ namespace HallowClips
             try { if (Directory.Exists(S.ClipsFolder)) return new DirectoryInfo(S.ClipsFolder).GetFiles("*.mp4", SearchOption.AllDirectories).OrderByDescending(f => f.LastWriteTime).Take(n).ToList(); } catch { }
             return new List<FileInfo>();
         }
+        readonly Dictionary<string, Tuple<long, DateTime, string>> titles = new Dictionary<string, Tuple<long, DateTime, string>>(StringComparer.OrdinalIgnoreCase);
+        string TitleOf(FileInfo f)
+        {
+            Tuple<long, DateTime, string> c;
+            if (titles.TryGetValue(f.FullName, out c) && c.Item1 == f.Length && c.Item2 == f.LastWriteTimeUtc) return c.Item3;
+            var s = Mp4.Title(f.FullName); titles[f.FullName] = Tuple.Create(f.Length, f.LastWriteTimeUtc, s); return s;
+        }
         double DurationOf(FileInfo f)
         {
             Tuple<long, DateTime, double> c;
@@ -318,7 +326,7 @@ namespace HallowClips
             {
                 var jpg = ThumbPath(f.FullName); Game g; byFolder.TryGetValue(f.Directory.Name, out g);
                 clips.Add(new Dictionary<string, object> { { "file", f.FullName }, { "game", g != null ? g.Name : f.Directory.Name }, { "installDir", g != null ? g.InstallDir : null }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length },
-                    { "durationSec", DurationOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", S.IsFavorite(f.FullName) } });
+                    { "durationSec", DurationOf(f) }, { "title", TitleOf(f) }, { "thumb", File.Exists(jpg) ? jpg : null }, { "favorite", S.IsFavorite(f.FullName) } });
             }
             var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
@@ -474,6 +482,8 @@ namespace HallowClips
             var openF = new Button { Content = "Open clips folder", Style = (Style)FindResource("Btn") };
             openF.Click += (s, e) => { Directory.CreateDirectory(S.ClipsFolder); Process.Start("explorer.exe", "\"" + S.ClipsFolder + "\""); };
             DockPanel.SetDock(openF, Dock.Right); ch.Children.Add(openF);
+            var reel = new Button { Content = "Highlight reel", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Join several clips into one video" };
+            reel.Click += (s, e) => MakeReel(); DockPanel.SetDock(reel, Dock.Right); ch.Children.Add(reel);
             ch.Children.Add(new TextBlock { Text = "YOUR CLIPS", FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = B("#A98BE0"), VerticalAlignment = VerticalAlignment.Center });
             root.Children.Add(ch);
             statusText = new TextBlock { Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, Margin = new Thickness(2, 8, 2, 0), TextTrimming = TextTrimming.CharacterEllipsis };
@@ -569,13 +579,22 @@ namespace HallowClips
                     try { Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(fi.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin); S.SetFavorite(fi.FullName, false); S.Save(); Status(fi.Name + " is in the Recycle Bin."); FillClips(); }
                     catch (Exception ex) { Status("Couldn't delete it: " + ex.Message); }
                 };
-                foreach (var b in new[] { play, star, trim, discord, ren, show, del }) btns.Children.Add(b);
-                if (busy.Contains(fi.FullName)) foreach (var b in new[] { trim, discord, ren, del }) b.IsEnabled = false;
+                // v1.7: title, thumbnail, GIF and phone exports
+                var more = ib("More", "Title, thumbnail, GIF, phone version, show in folder");
+                var cm = new ContextMenu();
+                Action<string, Action> mi = (label, act) => { var m = new MenuItem { Header = label }; m.Click += (s, e) => act(); cm.Items.Add(m); };
+                mi("Set title...", () => TitleClip(fi.FullName)); mi("Pick thumbnail...", () => PickThumb(fi.FullName));
+                mi("Export GIF...", () => GifClip(fi.FullName)); mi("Phone version (9:16)...", () => PhoneClip(fi.FullName)); mi("Show in folder", () => { try { Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\""); } catch { } });
+                more.ContextMenu = cm; more.Click += (s, e) => { cm.PlacementTarget = more; cm.Placement = PlacementMode.Bottom; cm.IsOpen = true; };
+                foreach (var b in new[] { play, star, trim, discord, ren, more, del }) btns.Children.Add(b);
+                if (busy.Contains(fi.FullName)) foreach (var b in new[] { trim, discord, ren, more, del }) b.IsEnabled = false;
                 DockPanel.SetDock(btns, Dock.Right); dp.Children.Add(btns);
                 var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
                 var name = Path.GetFileNameWithoutExtension(fi.Name); var game = fi.Directory.Name;
                 bool own = !System.Text.RegularExpressions.Regex.IsMatch(name, @"^" + System.Text.RegularExpressions.Regex.Escape(game) + @" \d{4}-\d\d-\d\d \d\d-\d\d-\d\d$");   // renamed by you
-                t.Children.Add(new TextBlock { Text = own ? name : game, FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name });
+                var title = TitleOf(fi);   // v1.7: your title (stored in the MP4) comes first
+                t.Children.Add(new TextBlock { Text = title ?? (own ? name : game), FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name });
+                if (title != null) own = true;
                 var len = DurationOf(fi);
                 t.Children.Add(new TextBlock { Text = (own ? game + "   \u00B7   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   \u00B7   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   \u00B7   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5 });
                 dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
@@ -757,6 +776,65 @@ namespace HallowClips
                 catch (Exception ex) { Status("Made " + r + " but couldn't copy it: " + ex.Message); }
             });
         }
+        // ---- v1.7: title, thumbnail, GIF, phone, highlight reel
+        void TitleClip(string clip)
+        {
+            if (busy.Contains(clip) || S.Ffmpeg == null) return;
+            var w = new PromptWindow("Clip title", "Shown in the list and kept inside the MP4 (players show it too). Leave it empty to remove it.", Mp4.Title(clip), "Save title") { Owner = this }; w.ShowDialog();
+            if (w.Value == null) return; var ff = S.Ffmpeg; var v = w.Value.Trim();
+            Work(clip, "Saving the title...", () => { string err; return Exports.SetTitle(ff, clip, v, out err) ? "" : "!" + err; }, r => Status(r.StartsWith("!") ? r.Substring(1) : v.Length > 0 ? "Title saved." : "Title removed."));
+        }
+        void PickThumb(string clip)
+        {
+            var ff = S.Ffmpeg; if (ff == null || busy.Contains(clip)) return;
+            var len = Mp4.Duration(clip); if (len <= 0) { Status("Couldn't read that clip."); return; }
+            var w = new ThumbWindow(clip, ff, len) { Owner = this }; w.ShowDialog(); if (w.At < 0) return; var at = w.At;
+            Work(clip, "Making the thumbnail...", () => Exports.ThumbAt(ff, clip, at, ThumbPath(clip)) ? "" : "!Couldn't make the thumbnail.", r => Status(r.StartsWith("!") ? r.Substring(1) : "Thumbnail changed."));
+        }
+        void GifClip(string clip)
+        {
+            var ff = S.Ffmpeg; if (ff == null || busy.Contains(clip)) return;
+            var len = Mp4.Duration(clip); if (len <= 0) { Status("Couldn't read that clip."); return; }
+            var w = new GifWindow(clip, ff, len) { Owner = this }; w.ShowDialog(); if (!w.Ok) return;
+            double a = w.Start, l = w.Length; int wd = w.Width0;
+            Work(clip, "Making the GIF...", () => { string err; var f = Exports.Gif(ff, clip, a, l, wd, out err); return f ?? "!" + err; },
+                r => { if (r.StartsWith("!")) Status(r.Substring(1)); else { Status("Saved " + Path.GetFileName(r) + " (" + (new FileInfo(r).Length / 1048576.0).ToString("0.0") + " MB) next to the clip."); try { Process.Start("explorer.exe", "/select,\"" + r + "\""); } catch { } } });
+        }
+        void PhoneClip(string clip)
+        {
+            var ff = S.Ffmpeg; if (ff == null || busy.Contains(clip)) return;
+            var len = Mp4.Duration(clip); if (len <= 0) { Status("Couldn't read that clip."); return; }
+            var w = new PhoneWindow(clip, ff, len) { Owner = this }; w.ShowDialog(); if (!w.Ok) return; var pos = w.Pos;
+            Work(clip, "Making the phone version...", () =>
+            {
+                var info = ClipOps.Inspect(ff, clip); string err;
+                var f = Exports.Phone(ff, clip, info, pos, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err); return f ?? "!" + err;
+            }, r => Status(r.StartsWith("!") ? r.Substring(1) : "Saved " + Path.GetFileName(r) + " (" + (new FileInfo(r).Length / 1048576.0).ToString("0.0") + " MB)."));
+        }
+        bool reeling;
+        void MakeReel()
+        {
+            var ff = S.Ffmpeg; if (ff == null) { Status("Set up FFmpeg first."); return; }
+            if (reeling) { Status("A highlight reel is already being made."); return; }
+            var all = RecentClips(40); if (all.Count == 0) { Status("No clips yet."); return; }
+            var w = new ReelWindow(all, ReelName, DurationOf) { Owner = this }; w.ShowDialog(); if (!w.Ok) return;
+            var clips = w.Picked; var fade = w.Crossfade; var title = w.TitleText; var folder = S.ClipsFolder; var q = S.Quality == "max" ? 18 : S.Quality == "medium" ? 28 : 23;
+            reeling = true; Status("Making the highlight reel...");
+            new Thread(() =>
+            {
+                string err; string f = null;
+                try { var infos = clips.Select(c => ClipOps.Inspect(ff, c)).ToList(); f = Exports.Reel(ff, folder, clips, infos, fade, title, q, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err); }
+                catch (Exception ex) { err = ex.Message; }
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    reeling = false;
+                    if (f == null) { Status(err); return; }
+                    Status("Saved " + Path.GetFileName(f) + " in the Highlights folder."); toast.Flash("Highlight reel ready"); FillClips(); EnforceLimit();
+                }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+        string ReelName(FileInfo f) { var t = TitleOf(f); return t ?? f.Directory.Name + (Regex.IsMatch(Path.GetFileNameWithoutExtension(f.Name), @"\d{4}-\d\d-\d\d \d\d-\d\d-\d\d") ? "" : " - " + Path.GetFileNameWithoutExtension(f.Name)); }
+
         void RenameClip(string clip)
         {
             if (busy.Contains(clip)) return;
@@ -770,7 +848,7 @@ namespace HallowClips
         void Thumb(string clip, Border target)
         {
             var dir = Path.Combine(ClipSettings.Dir, "thumbs"); var jpg = ThumbPath(clip);
-            Action show = () => { try { var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.UriSource = new Uri(jpg); bi.DecodePixelWidth = 256; bi.EndInit(); bi.Freeze(); target.Background = new ImageBrush(bi) { Stretch = Stretch.UniformToFill }; } catch { } };
+            Action show = () => { try { var bi = new BitmapImage(); bi.BeginInit(); bi.CacheOption = BitmapCacheOption.OnLoad; bi.CreateOptions = BitmapCreateOptions.IgnoreImageCache; bi.UriSource = new Uri(jpg); bi.DecodePixelWidth = 256; bi.EndInit(); bi.Freeze(); target.Background = new ImageBrush(bi) { Stretch = Stretch.UniformToFill }; } catch { } };
             if (File.Exists(jpg)) { show(); return; }
             var ff = S.Ffmpeg; if (ff == null || Snap.On) return;
             new Thread(() =>
@@ -824,6 +902,12 @@ namespace HallowClips
             {
                 Snap.Save(new RenameWindow(clip.FullName), System.IO.Path.Combine(dir, "rename.png"), 480, 0);
                 if (S.Ffmpeg != null) Snap.Save(new TrimWindow(clip.FullName, S.Ffmpeg, ClipOps.Inspect(S.Ffmpeg, clip.FullName)), System.IO.Path.Combine(dir, "trim.png"), 580, 0);
+                Snap.Save(new PromptWindow("Clip title", "Shown in the list and kept inside the MP4 (players show it too). Leave it empty to remove it.", "Big play", "Save title"), System.IO.Path.Combine(dir, "title.png"), 480, 0);
+                Snap.Save(new ThumbWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "thumb.png"), 560, 0);
+                Snap.Save(new GifWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "gif.png"), 560, 0);
+                Snap.Save(new PhoneWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "phone.png"), 560, 0);
+                var rw = new ReelWindow(RecentClips(40), ReelName, DurationOf); if (RecentClips(40).Count > 1) { rw.Check(0); rw.Check(1); }
+                Snap.Save(rw, System.IO.Path.Combine(dir, "reel.png"), 620, 0);
             }
         }
     }

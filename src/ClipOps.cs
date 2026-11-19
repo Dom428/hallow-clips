@@ -38,17 +38,24 @@ namespace HallowClips
         }
 
         // ---- what's in a clip: length, video codec, number of sound tracks, and the keyframes (where a copy-cut can start)
-        public class Info { public double Duration; public string Codec = ""; public int AudioTracks; public List<double> Keys = new List<double>(); }
+        public class Info { public double Duration, VideoDuration, Fps; public string Codec = ""; public int AudioTracks, Width, Height, SampleRate; public List<double> Keys = new List<double>(); }
         public static Info Inspect(string ffmpeg, string clip)
         {
             var info = new Info(); var probe = Probe(ffmpeg); if (probe == null) return info;
             string err; int exit;
-            var s = Run(probe, "-v error -show_entries format=duration:stream=codec_type,codec_name -of compact=p=0:nk=0 \"" + clip + "\"", 15000, out err, out exit) ?? "";
+            var s = Run(probe, "-v error -show_entries format=duration:stream=codec_type,codec_name,width,height,avg_frame_rate,sample_rate,duration -of compact=p=0:nk=0 \"" + clip + "\"", 15000, out err, out exit) ?? "";
             foreach (var line in s.Split('\n'))
             {
-                if (line.Contains("codec_type=video") && info.Codec == "") { var m = System.Text.RegularExpressions.Regex.Match(line, "codec_name=([^|\\s]+)"); if (m.Success) info.Codec = m.Groups[1].Value; }
-                if (line.Contains("codec_type=audio")) info.AudioTracks++;
-                var d = System.Text.RegularExpressions.Regex.Match(line, "^duration=([0-9.]+)"); if (d.Success) double.TryParse(d.Groups[1].Value, NumberStyles.Float, Inv, out info.Duration);
+                Func<string, string> val = key => { var m = System.Text.RegularExpressions.Regex.Match(line, "(?:^|\\|)" + key + "=([^|\\r\\n]+)"); return m.Success ? m.Groups[1].Value.Trim() : ""; };
+                if (line.Contains("codec_type=video") && info.Codec == "")
+                {
+                    info.Codec = val("codec_name"); int.TryParse(val("width"), out info.Width); int.TryParse(val("height"), out info.Height);
+                    double.TryParse(val("duration"), NumberStyles.Float, Inv, out info.VideoDuration);
+                    var fr = val("avg_frame_rate").Split('/'); double n, dd;
+                    if (fr.Length == 2 && double.TryParse(fr[0], NumberStyles.Float, Inv, out n) && double.TryParse(fr[1], NumberStyles.Float, Inv, out dd) && dd > 0) info.Fps = Math.Round(n / dd, 2);
+                }
+                if (line.Contains("codec_type=audio")) { info.AudioTracks++; if (info.SampleRate == 0) int.TryParse(val("sample_rate"), out info.SampleRate); }
+                var d = System.Text.RegularExpressions.Regex.Match(line, "^duration=([0-9.]+)\\s*$"); if (d.Success) double.TryParse(d.Groups[1].Value, NumberStyles.Float, Inv, out info.Duration);
             }
             // packet flags (no decoding): K = keyframe
             var k = Run(probe, "-v error -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 \"" + clip + "\"", 30000, out err, out exit) ?? "";

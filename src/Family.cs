@@ -166,6 +166,36 @@ namespace HallowClips
             catch { }
             return 0;
         }
+        // v1.7: the title stored in the MP4 (moov > udta > meta > ilst > (c)nam > data), or null
+        public static string Title(string file)
+        {
+            try
+            {
+                using (var f = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    long end = f.Length, pos = 0;
+                    while (pos + 8 <= end)
+                    {
+                        f.Position = pos; long size = U32(f); var tb = new byte[4]; f.Read(tb, 0, 4); long head = 8;
+                        if (size == 1) { size = (long)U64(f); head = 16; } else if (size == 0) size = end - pos;
+                        if (size < head || pos + size > f.Length) return null;
+                        var type = Encoding.ASCII.GetString(tb);
+                        if (type == "moov" || type == "udta" || type == "ilst") { end = pos + size; pos += head; continue; }
+                        if (type == "meta") { end = pos + size; pos += head + 4; continue; }   // a full box: 4 bytes version/flags
+                        if (tb[0] == 0xA9 && type.EndsWith("nam"))
+                        {
+                            f.Position = pos + head; long dsize = U32(f); var dt = new byte[4]; f.Read(dt, 0, 4);
+                            if (Encoding.ASCII.GetString(dt) != "data" || dsize < 16 || dsize > 4096) return null;
+                            f.Position += 8; var b = new byte[dsize - 16]; f.Read(b, 0, b.Length);
+                            var s = Encoding.UTF8.GetString(b).Trim(); return s.Length == 0 ? null : s;
+                        }
+                        pos += size;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
         static long U32(Stream s) { var b = new byte[4]; s.Read(b, 0, 4); return ((long)b[0] << 24) | ((long)b[1] << 16) | ((long)b[2] << 8) | b[3]; }
         static ulong U64(Stream s) { return ((ulong)U32(s) << 32) | (ulong)U32(s); }
         static string Type(Stream s) { var b = new byte[4]; s.Read(b, 0, 4); return Encoding.ASCII.GetString(b); }

@@ -11,13 +11,9 @@
 | **1.4** | Hallow family: save a clip from Hallow Remote, Clip saved in Hallow Overlay, this game's clips on its Hallow Hub page, opt-in Discord post through Hallow Toolkit (status.json with real game names and install folders) |
 | **1.5** | One Hallow icon: open / menu / invoke / quit for Hallow Hub's tray menu, Use the Hallow icon (own icon hidden while Hub hosts), balloons through Hub |
 | **1.6** | Use the Hallow accent (theme.json, live), crash reports kept on this PC with a notice next start and lastCrash in status; FFmpeg never left running |
+| **1.7** | Highlight reel (copy or one GPU re-encode, crossfades, title card), clip titles and thumbnail picker, GIF and 9:16 phone exports |
 
 ## Next
-
-### 1.7 - Highlight reel, titles and exports
-- Highlight reel: pick and order clips, join them into one MP4 (copy when formats match, else one GPU re-encode), optional crossfade and title card
-- Clip titles (MP4 title metadata, shown in the list, in status.json) and pick the thumbnail frame
-- Export a GIF (palette, length cap, width choices) or a 9:16 phone version under ~50 MB
 
 ## Later
 - Auto clips from game events - only a few games (CS2, Dota 2) expose them, and none of the games played here do
