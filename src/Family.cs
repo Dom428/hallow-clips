@@ -16,7 +16,9 @@ namespace HallowClips
 {
     public static class Family
     {
-        public static string PipeName(string app) { return "HallowFamily." + app + "." + Environment.UserName; }
+        // tests: HALLOWCLIPS_TEST_PIPE names our own pipe (e.g. "ClipsTest"), so a test copy runs next to the real one
+        public static string TestPipe { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_PIPE"); } }
+        public static string PipeName(string app) { if (app == "Clips" && !string.IsNullOrEmpty(TestPipe)) app = TestPipe; return "HallowFamily." + app + "." + Environment.UserName; }
 
         // ---- server: one line in, one line out. handler gets the line and returns the reply ("ok ...", "error ...").
         public static void Serve(string app, Func<string, string> handler)

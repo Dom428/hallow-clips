@@ -36,17 +36,18 @@ namespace HallowClips
         [DataMember] public bool PerAppSound = true;      // v1.9: the game and AppTracks on their own sound tracks
         [DataMember] public bool GameTrack = true;        // v1.9: the running game on its own track
         [DataMember] public List<string> AppTracks = new List<string> { "Discord" };   // v1.9: exe names
-        [DataMember] public string ExportSound = "all";
+        [DataMember] public string ExportSound = "all";   // v1.9: all (everything + mic), nomic, game, gamemic
         [DataMember] public string Webcam = "";           // v1.10: camera name, "" = no webcam
         [DataMember] public string WebcamCorner = "br";   // v1.10: tl, tr, bl, br
         [DataMember] public string WebcamSize = "medium"; // v1.10: small, medium, large
-        [DataMember] public bool RamBuffer = false;       // v1.10: keep the replay buffer in memory   // v1.9: all (everything + mic), nomic, game, gamemic
+        [DataMember] public bool RamBuffer = false;       // v1.10: keep the replay buffer in memory
+        [DataMember] public string DiscordClips = "pause"; // v1.11: when Discord Clips also records: pause (Clips steps aside) or both
         [DataMember] public bool UseHallowAccent = true; // v1.6: the Hallow accent colour from theme.json
         [DataMember] public string LastCrashShown = "";  // v1.6: the crash report already told about
         [DataMember] public bool UseHallowIcon = true;   // v1.5: hide our tray icon while Hallow Hub hosts the family icon
         [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
         [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; Webcam = ""; WebcamCorner = "br"; WebcamSize = "medium"; RamBuffer = false; CodecsFor = ""; Codecs = new List<string>(); }
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; Webcam = ""; WebcamCorner = "br"; WebcamSize = "medium"; RamBuffer = false; DiscordClips = "pause"; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_DATA"); return !string.IsNullOrEmpty(t) ? t : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }   // tests use their own folder
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -86,6 +87,7 @@ namespace HallowClips
         public bool InMemory { get { return ram != null; } }
         public bool Crashed { get { try { return ff != null && ff.HasExited; } catch { return false; } } }   // FFmpeg ended by itself
         public long MemoryBytes { get { var r = ram; return r == null ? 0 : r.Bytes; } }
+        public static bool TestScreen { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_SCREEN") == "1"; } }   // tests: never the real screen
         public static string TestCamera { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_CAMERA"); } }   // tests: a generated picture instead of a camera
         static string WebcamInput(string name)
         {
@@ -179,9 +181,11 @@ namespace HallowClips
             // v1.10: webcam in a corner (the screen comes off the graphics card for that); NoWebcam = it failed last time
             var cam = !NoWebcam && !string.IsNullOrEmpty(S.Webcam) ? S.Webcam : null; WebcamUsed = cam != null;
             var v = (fam == "mf" && cam == null ? "-vf hwdownload,format=bgra " : "") + VideoArgs(fam, Codec, q);
+            if (TestScreen) { cam = null; WebcamUsed = false; v = "-c:v mpeg2video -q:v 8"; }   // tests: a small generated picture on the CPU, not the screen or the graphics card
             var a = new StringBuilder();
             a.Append("-hide_banner -loglevel info -nostats -y ");   // info: "Press [q]" tells us when recording really starts
-            a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
+            if (TestScreen) a.Append("-f lavfi -i testsrc2=s=320x180:r=10 ");
+            else a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
             int idx = 1; var maps = cam != null ? "-map \"[vout]\" " : "-map 0:v ";
             foreach (var p in Pipes)
             {
@@ -224,7 +228,7 @@ namespace HallowClips
                 // an FFmpeg that never says it started (shouldn't happen): start the audio clock anyway
                 new Timer(_ => { foreach (var p in all) p.Live = true; }, null, 5000, Timeout.Infinite);
                 ff.Start(); Job.Add(ff); ff.BeginErrorReadLine();
-                try { ff.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
+                try { ff.PriorityClass = TestScreen ? ProcessPriorityClass.Idle : ProcessPriorityClass.BelowNormal; } catch { }
                 foreach (var p in all) p.Start();
                 Started = DateTime.Now;
                 logTimer = new Timer(_ => WriteLog(), null, 30000, 60000);   // also while recording, in case the app is closed hard

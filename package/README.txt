@@ -7,6 +7,12 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.11
+- Steps aside for Discord Clips: while Discord's own Clips records the same game, Hallow Clips pauses (one recorder
+  on the graphics card instead of two) and starts again by itself when it stops.
+- Settings > When Discord Clips is also recording: pause Hallow Clips (default) or keep both.
+  "Record anyway this session" is in the menu.
+
 WHAT'S NEW IN 1.10
 - Webcam in a corner of your clips and sessions (Settings > Webcam).
 - Keep the replay in memory instead of on disk to spare your SSD (Settings).

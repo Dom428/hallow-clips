@@ -15,6 +15,7 @@
 | **1.8** | Updates itself from GitHub (asks first, SHA-256, never FFmpeg), Ctrl+Alt+P screenshots, Ctrl+Alt+B markers as chapters |
 | **1.9** | Game, Discord and other picked apps on their own sound tracks (per-process loopback, Windows 10 2004+), sound tracks chosen for exports |
 | **1.10** | Webcam overlay (corner, size), replay buffer in memory (spares the SSD), settings behind a Settings button |
+| **1.11** | Steps aside for Discord Clips (discord_clips.exe running and its GPU video encoder busy): pauses the replay buffer and resumes by itself; setting pause / keep both, Record anyway this session (menu, `anyway`), `pausedFor` in status |
 
 ## Next
 ### Gaps vs ShadowPlay / Medal

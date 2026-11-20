@@ -28,14 +28,16 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.10.0.0")]
-[assembly: AssemblyFileVersion("1.10.0.0")]
+[assembly: AssemblyVersion("1.11.0.0")]
+[assembly: AssemblyFileVersion("1.11.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.10";
+        public const string Version = "1.11";
+        // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
+        public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
         public static void Main(string[] args)
         {
@@ -53,8 +55,9 @@ namespace HallowClips
                 new MainWindow(true).SnapAll(args[si + 1]); return;
             }
             bool created;
-            var mutex = new Mutex(true, @"Local\HallowClips", out created);
-            var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\HallowClipsShow");
+            var one = string.IsNullOrEmpty(Family.TestPipe) ? "" : "." + Family.TestPipe;   // tests: a copy next to the real one
+            var mutex = new Mutex(true, @"Local\HallowClips" + one, out created);
+            var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\HallowClipsShow" + one);
             if (!created) { showEvent.Set(); return; }
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; LoadTheme(app);
             app.DispatcherUnhandledException += (s, e) => { Crash.Write(e.Exception, "window"); e.Handled = true; Environment.Exit(1); };
@@ -94,6 +97,9 @@ namespace HallowClips
         public void Flash(string msg)
         {
             ((System.Windows.Shapes.Path)ic).Fill = Accent.Brush; frame.BorderBrush = Accent.Brush;   // v1.6: follows the Hallow accent
+            text.Text = msg;   // v1.11: the text and Show() had gone missing in 1.6, so the pop-up never appeared
+            if (Program.Quiet) { try { File.AppendAllText(Path.Combine(ClipSettings.Dir, "toast.log"), DateTime.Now.ToString("HH:mm:ss") + " " + msg + Environment.NewLine); } catch { } return; }   // tests: nothing on the screen
+            if (!IsVisible) Show(); UpdateLayout();
             Left = SystemParameters.PrimaryScreenWidth - ActualWidth - 20; Top = 20; hide.Stop(); hide.Start();
         }
     }
@@ -130,8 +136,8 @@ namespace HallowClips
                 }
                 else Quit();
             };
-            if (Snap.On) { UpdateState(); FillClips(); return; }
-            try { games = Library.Scan(new List<Game>()); } catch { }
+            if (Snap.On) { discordOn = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_SNAP_DISCORD") == "1"; UpdateState(); FillClips(); return; }   // v1.11: snaps of the paused look
+            try { games = ScanGames(); } catch { }
             SetupTray();
             var hwnd = new WindowInteropHelper(this).EnsureHandle();
             hotkeyOk = RegisterHotKey(hwnd, 1, 0x4003, 0x53);   // Ctrl+Alt+S (MOD_ALT | MOD_CONTROL | MOD_NOREPEAT)
@@ -149,12 +155,12 @@ namespace HallowClips
             var poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
             poll.Tick += (s, e) => { try { tracker.Poll(games.Concat(games.SelectMany(g => g.Alts)).ToList()); } catch { } Decide(); };
             poll.Start();
-            var rescan = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) }; rescan.Tick += (s, e) => { try { games = Library.Scan(new List<Game>()); } catch { } }; rescan.Start();
+            var rescan = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) }; rescan.Tick += (s, e) => { try { games = ScanGames(); } catch { } }; rescan.Start();
             UpdateState(); FillClips();
             if (!hotkeyOk) Status("Ctrl+Alt+S is taken by another app - use the Save button or the tray menu, or close that app and restart Hallow Clips.");
             else if (!sessionKeyOk) Status("Ctrl+Alt+R is taken by another app - use the Record session button instead.");
             else if (!shotKeyOk || !markKeyOk) Status((!shotKeyOk ? "Ctrl+Alt+P" : "Ctrl+Alt+B") + " is taken by another app - use the Hallow icon menu instead.");
-            DateTime lastCheck; if (!DateTime.TryParse(S.LastUpdateCheck, out lastCheck) || (DateTime.Now - lastCheck).TotalHours > 20) CheckForUpdate(false);
+            DateTime lastCheck; if (!Program.Quiet && (!DateTime.TryParse(S.LastUpdateCheck, out lastCheck) || (DateTime.Now - lastCheck).TotalHours > 20)) CheckForUpdate(false);
             FindCodecs(); FinishLeftoverSessions(); FindWebcams();
             Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
             Family.Serve("Clips", Command);
@@ -166,9 +172,39 @@ namespace HallowClips
             IsVisibleChanged += (s, e) => { if (IsVisible) Dispatcher.BeginInvoke(new Action(ShowCrashNotice), DispatcherPriority.ApplicationIdle); };
             int crashIn; if (int.TryParse(Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_CRASH"), out crashIn))   // tests only: crash on purpose
             { var ct = new DispatcherTimer { Interval = TimeSpan.FromSeconds(crashIn) }; ct.Tick += (s, e) => { throw new InvalidOperationException("Test crash (HALLOWCLIPS_TEST_CRASH)"); }; ct.Start(); }
-            if (!startHidden) Show();
+            // v1.11: Discord Clips - looked for every 3 s (off the UI thread) while Clips would be recording
+            var dc = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) }; dc.Tick += (s, e) => CheckDiscord(); dc.Start();
+            if (!startHidden && !Program.Quiet) Show();
             Dispatcher.BeginInvoke(new Action(Decide), DispatcherPriority.ApplicationIdle);
         }
+        // tests: HALLOWCLIPS_TEST_GAMEDIR = the folder of a stand-in game (the only game known); otherwise the real library
+        static List<Game> ScanGames()
+        {
+            var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_GAMEDIR");
+            if (!string.IsNullOrEmpty(t)) return new List<Game> { new Game { Id = "test:game", Name = "Test Game", Source = "custom", InstallDir = t.TrimEnd('\\') } };
+            return Library.Scan(new List<Game>());
+        }
+
+        // ---- v1.11: step aside for Discord Clips (both recording the same game = two encoders on the graphics card)
+        readonly DiscordClips discord = new DiscordClips();
+        bool discordOn, checkingDiscord, recordAnyway; string anywayFor, lastPausedFor;
+        bool WouldRecord { get { return S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null); } }
+        // "Discord Clips" while we stand aside, otherwise null (also in status.json as pausedFor)
+        string PausedFor { get { return WouldRecord && discordOn && S.DiscordClips != "both" && !recordAnyway ? DiscordClips.Name : null; } }
+        bool DiscordChoice { get { return WouldRecord && discordOn && S.DiscordClips != "both"; } }   // "Record anyway" makes sense
+        void CheckDiscord()
+        {
+            if (checkingDiscord) return;
+            if (!WouldRecord || S.DiscordClips == "both") { if (discordOn) { discordOn = false; Decide(); } return; }
+            checkingDiscord = true;
+            new Thread(() =>
+            {
+                bool on = false; try { discord.Check(); on = discord.Recording; } catch { }
+                Dispatcher.BeginInvoke(new Action(() => { checkingDiscord = false; if (on != discordOn) { discordOn = on; Decide(); } }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "discord clips" }.Start();
+        }
+        const string PausedMsg = "Discord Clips is recording this game - Hallow Clips is paused";
+        void SetRecordAnyway(bool on) { recordAnyway = on; anywayFor = on ? GameName : null; Decide(); Status(on ? "Recording next to Discord Clips until this game closes." : PausedFor != null ? PausedMsg + "." : ""); }
 
         // ---- v1.6: the Hallow accent - follows theme.json live (debounced), Clips' own orange when off or missing
         FileSystemWatcher accentWatch; DispatcherTimer accentSoon, accentRetry;
@@ -262,7 +298,9 @@ namespace HallowClips
             var save = it("save", "Save clip", null); if (!rec.Running) save["enabled"] = false;
             var record = it("record", "Record session", session != null); if (finishing || S.Ffmpeg == null) record["enabled"] = false;
             var mark = it("mark", "Add marker", null); if (!rec.Running && session == null) mark["enabled"] = false;
-            return new List<object> { save, record, it("screenshot", "Take screenshot", null), mark, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
+            var list = new List<object> { save, record, it("screenshot", "Take screenshot", null), mark, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
+            if (DiscordChoice) list.Insert(5, it("anyway", "Record anyway this session", recordAnyway));   // v1.11: only while Discord Clips records this game
+            return list;
         }
         string Invoke(string id)
         {
@@ -271,6 +309,7 @@ namespace HallowClips
             if (id == "replay") { S.On = !S.On; S.Save(); if (replaySwitch != null) replaySwitch.IsChecked = S.On; Restart(); return null; }
             if (id == "screenshot") { Screenshot(); return null; }
             if (id == "mark") { Mark(); return null; }
+            if (id == "anyway") { if (!DiscordChoice) return "Discord Clips isn't recording"; SetRecordAnyway(!recordAnyway); return null; }
             if (id == "folder") { try { Directory.CreateDirectory(S.ClipsFolder); Process.Start("explorer.exe", "\"" + S.ClipsFolder + "\""); return null; } catch (Exception e) { return Family.OneLine(e.Message); } }
             return "unknown item";
         }
@@ -291,16 +330,17 @@ namespace HallowClips
                 Dispatcher.BeginInvoke(new Action(() => { checkingHost = false; SetHosted(on && S.UseHallowIcon); }));
             }) { IsBackground = true }.Start();
         }
-        void SetHosted(bool on) { hostedByHub = on; if (tray != null && !exiting) tray.Visible = !on; WriteStatus(false); }
+        void SetHosted(bool on) { hostedByHub = on; if (tray != null && !exiting) tray.Visible = !on && !Program.Quiet; WriteStatus(false); }
         // a tray balloon - through Hub's icon while ours is hidden (ours shows briefly if Hub doesn't answer)
         void Balloon(string title, string text)
         {
             if (tray == null) return;
+            if (Program.Quiet && !hostedByHub) { try { File.AppendAllText(Path.Combine(ClipSettings.Dir, "balloon.log"), DateTime.Now.ToString("HH:mm:ss") + " " + title + " | " + text + Environment.NewLine); } catch { } return; }   // tests
             if (!hostedByHub) { tray.ShowBalloonTip(4000, title, text, WF.ToolTipIcon.None); return; }
             new Thread(() =>
             {
                 var r = Family.Send(HubPipe, "notify Clips\t" + title + "\t" + text, 3000);
-                if (r == null || !(r == "ok" || r.StartsWith("ok "))) Dispatcher.BeginInvoke(new Action(() => { tray.Visible = true; tray.ShowBalloonTip(4000, title, text, WF.ToolTipIcon.None); }));   // the next check hides it again
+                if ((r == null || !(r == "ok" || r.StartsWith("ok "))) && !Program.Quiet) Dispatcher.BeginInvoke(new Action(() => { tray.Visible = true; tray.ShowBalloonTip(4000, title, text, WF.ToolTipIcon.None); }));   // the next check hides it again
             }) { IsBackground = true }.Start();
         }
 
@@ -339,14 +379,14 @@ namespace HallowClips
             }
             var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
-                { "recording", rec.Running }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "lastCrash", Crash.Last().HasValue ? Family.Time(Crash.Last().Value) : null }, { "clips", clips } });
+                { "recording", rec.Running }, { "pausedFor", PausedFor }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "lastCrash", Crash.Last().HasValue ? Family.Time(Crash.Last().Value) : null }, { "clips", clips } });
         }
         string lastStatusKey;
         // writes status.json when something changed (force: the clip list changed)
         void WriteStatus(bool force)
         {
             if (Snap.On) return;
-            var key = rec.Running + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder + "|" + hostedByHub;
+            var key = rec.Running + "|" + PausedFor + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder + "|" + hostedByHub;
             if (!force && key == lastStatusKey) return;
             lastStatusKey = key;
             if (statusSoon == null) { statusSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) }; statusSoon.Tick += (s, e) => { statusSoon.Stop(); var json = StatusJson(); new Thread(() => Family.WriteStatus(json)) { IsBackground = true }.Start(); }; }
@@ -365,7 +405,9 @@ namespace HallowClips
         // record when it should (on, FFmpeg ready, and a game running unless "always")
         void Decide()
         {
-            bool want = S.On && S.Ffmpeg != null && (!S.OnlyInGame || Current != null);
+            if (recordAnyway && anywayFor != GameName) recordAnyway = false;   // v1.11: "this session" = until the game closes or changes
+            var paused = PausedFor;
+            bool want = WouldRecord && paused == null;   // v1.11: not while Discord Clips records the same game (unless you said keep both)
             var gp = S.PerAppSound && Current != null ? Current.Pid : 0;
             if (want && rec.Running && S.PerAppSound && gp != rec.GamePid && ProcessAudio.Supported) rec.Stop();   // v1.9: a game started or ended - restart so it gets its own track
             if (want && !rec.Running && rec.Crashed && (DateTime.Now - rec.Started).TotalSeconds < 20)
@@ -375,7 +417,13 @@ namespace HallowClips
                 else if (S.RamBuffer && !rec.NoRam) { rec.NoRam = true; Status("The replay couldn't be kept in memory - using the disk instead."); }
             }
             if (want && !rec.Running) { rec.GamePid = gp; if (!rec.Start()) Status(rec.Error); }
-            else if (!want && rec.Running) rec.Stop();
+            else if (!want && rec.Running) rec.Stop();   // also when Discord Clips starts: FFmpeg is told to stop cleanly (q), killed after 3 s
+            if (paused != lastPausedFor)
+            {
+                if (paused != null) Status(PausedMsg + " (Record anyway is in the menu).");
+                else if (lastPausedFor != null && want) Status("Discord Clips stopped - Hallow Clips is recording again.");
+                lastPausedFor = paused;
+            }
             UpdateState(); WriteStatus(false);
         }
 
@@ -384,6 +432,12 @@ namespace HallowClips
         void SaveClip(Action<string, string> done)
         {
             if (saving) { if (done != null) waiting.Add(done); return; }   // already saving: that clip is the answer
+            if (!rec.Running && PausedFor != null)
+            {
+                // v1.11: standing aside for Discord Clips - say so (Discord's own hotkey saves its clip)
+                toast.Flash(PausedMsg); if (hostedByHub) Balloon("Hallow Clips", PausedMsg + ". Use Discord's clip hotkey, or Record anyway in the menu.");
+                Status(PausedMsg + "."); if (done != null) done(null, PausedMsg); return;
+            }
             if (!rec.Running) { toast.Flash(S.Ffmpeg == null ? "Hallow Clips isn't set up yet" : "Not recording right now"); if (done != null) done(null, "Nothing recorded yet"); return; }
             saving = true; if (done != null) waiting.Add(done); var name = GameName; var secs = S.Seconds;
             toast.Flash("Saving the last " + secs + " seconds...");
@@ -392,7 +446,7 @@ namespace HallowClips
                 var mk = marks.ToList(); string err; var f = rec.Save(secs, name, mk, out err);
                 // Hallow Overlay shows "Clip saved" on its panel when it runs; otherwise our own pop-up does
                 bool overlay = false;
-                if (f != null) { var r = Family.Send("Overlay", "flash Clip saved", 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
+                if (f != null && !Program.Quiet) { var r = Family.Send("Overlay", "flash Clip saved", 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     saving = false;
@@ -436,7 +490,10 @@ namespace HallowClips
             var sr = new StackPanel { Orientation = Orientation.Horizontal };
             dot = new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(6), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
             sr.Children.Add(dot);
-            state = new TextBlock { FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center }; sr.Children.Add(state);
+            state = new TextBlock { FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 560 }; sr.Children.Add(state);
+            // v1.11: while Discord Clips records this game
+            anywayBtn = new Button { Content = "Record anyway", Style = (Style)FindResource("Btn"), Margin = new Thickness(12, 0, 0, 0), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Record with Hallow Clips too, next to Discord Clips, until this game closes" };
+            anywayBtn.Click += (s, e) => { if (DiscordChoice) SetRecordAnyway(!recordAnyway); }; sr.Children.Add(anywayBtn);
             cs.Children.Add(sr);
             cs.Children.Add(new TextBlock { Text = "Press Ctrl+Alt+S in any game to save the last moments. Your game sound and your mic are on separate tracks.", Foreground = (Brush)FindResource("Muted"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(22, 4, 0, 0) });
             var fr = new DockPanel { Margin = new Thickness(22, 10, 0, 0) };
@@ -453,7 +510,7 @@ namespace HallowClips
             Func<string, IEnumerable<Tuple<string, string>>, Func<string>, Action<string>, bool, FrameworkElement> chipRow = (label, opts, get, setv, restart) =>
             {
                 var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
-                var l = new TextBlock { Text = label, Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold }; DockPanel.SetDock(l, Dock.Left); row.Children.Add(l);
+                var l = new TextBlock { Text = label, Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 8, 0) }; DockPanel.SetDock(l, Dock.Left); row.Children.Add(l);
                 var wp = new WrapPanel();
                 foreach (var o in opts)
                 {
@@ -531,6 +588,11 @@ namespace HallowClips
             FillWebcamRow();
             set.Children.Add(chipRow("Sound in exports", new[] { Tuple.Create("all", "Everything + mic"), Tuple.Create("nomic", "Everything, no mic"), Tuple.Create("game", "Game only"), Tuple.Create("gamemic", "Game + mic") },
                 () => S.ExportSound ?? "all", v => { S.ExportSound = v; ClipOps.ExportChoice = v; }, false));
+            // v1.11: Discord Clips records the same game with its own encoder - by default Clips steps aside
+            var dcRow = chipRow("When Discord Clips is also recording", new[] { Tuple.Create("pause", "Let Discord record - pause Hallow Clips"), Tuple.Create("both", "Keep both recording") },
+                () => S.DiscordClips == "both" ? "both" : "pause", v => { S.DiscordClips = v; Dispatcher.BeginInvoke(new Action(() => { CheckDiscord(); Decide(); })); }, false);
+            ((FrameworkElement)dcRow).ToolTip = "Discord's own Clips records the same game on the graphics card, so two recorders would double the load. Paused, Hallow Clips starts again by itself a few seconds after Discord Clips stops; Record anyway (menu or above) keeps both for this game.";
+            set.Children.Add(dcRow);
             Func<string, bool, Action<bool>, CheckBox> sw = (text, on, setv) =>
             {
                 var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
@@ -570,7 +632,7 @@ namespace HallowClips
             return root;
         }
 
-        StackPanel settingsPanel; bool showSettings;
+        StackPanel settingsPanel; bool showSettings; Button anywayBtn;
         void Restart() { if (rec.Running) rec.Stop(); rec.NoWebcam = false; rec.NoRam = false; Decide(); }
 
         void UpdateState()
@@ -581,9 +643,13 @@ namespace HallowClips
                 "Hallow Clips records with FFmpeg (free). It downloads once from GitHub and is checked before use.";
             bool on = rec.Running || (Snap.On && ok);
             dot.Background = on ? B("#E0424C") : B("#5A5268");
-            state.Text = !ok ? "Not set up yet" : !S.On ? "Instant replay is off" : on ? "Recording " + (Current != null ? GameName : "your screen") + " - Ctrl+Alt+S saves the last " + S.Seconds + " s"
+            var paused = PausedFor;   // v1.11
+            if (paused != null) dot.Background = B("#E0A030");
+            if (trayAnyway != null) { trayAnyway.Visible = DiscordChoice; trayAnyway.Checked = recordAnyway; }
+            if (anywayBtn != null) { anywayBtn.Visibility = DiscordChoice ? Visibility.Visible : Visibility.Collapsed; anywayBtn.Content = recordAnyway ? "Pause for Discord" : "Record anyway"; }
+            state.Text = !ok ? "Not set up yet" : !S.On ? "Instant replay is off" : paused != null ? "Paused - Discord Clips is recording " + (Current != null ? GameName : "your screen") + ", so only one recorder runs" : on ? "Recording " + (Current != null ? GameName : "your screen") + " - Ctrl+Alt+S saves the last " + S.Seconds + " s"
                 : S.OnlyInGame ? "Waiting for a game - it starts by itself" : "Starting...";
-            if (tray != null) tray.Text = rec.Running ? "Hallow Clips - recording (Ctrl+Alt+S)" : "Hallow Clips";
+            if (tray != null) tray.Text = rec.Running ? "Hallow Clips - recording (Ctrl+Alt+S)" : paused != null ? "Hallow Clips - paused for Discord Clips" : "Hallow Clips";
         }
 
         // ---- FFmpeg: the LGPL build from BtbN/FFmpeg-Builds on GitHub, checked against GitHub's SHA-256 before it's used
@@ -680,13 +746,14 @@ namespace HallowClips
         }
 
         // ---- v1.3: record a whole session (start / stop) - its own recorder next to the replay buffer, straight to a file
-        Recorder session; Button sessionBtn; WF.ToolStripMenuItem traySession; DispatcherTimer sessionTick; bool finishing;
+        Recorder session; Button sessionBtn; WF.ToolStripMenuItem traySession, trayAnyway; DispatcherTimer sessionTick; bool finishing;
         void ToggleSession()
         {
             if (finishing) return;
             if (session != null) { StopSession(); return; }
             if (S.Ffmpeg == null) { toast.Flash("Hallow Clips isn't set up yet"); return; }
-            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name); r.NoWebcam = rec.Running && rec.WebcamUsed;   // the camera is busy in the replay r.GamePid = S.PerAppSound && Current != null ? Current.Pid : 0;
+            var r = new Recorder(S); var name = GameName; r.SessionFile = r.SessionName(name); r.NoWebcam = rec.Running && rec.WebcamUsed;   // the camera is busy in the replay
+            r.GamePid = S.PerAppSound && Current != null ? Current.Pid : 0;
             if (!r.Start()) { toast.Flash("Couldn't start recording"); Status(r.Error); return; }
             session = r;
             toast.Flash("Recording the whole session - Ctrl+Alt+R stops");
@@ -907,7 +974,7 @@ namespace HallowClips
         {
             new Thread(() =>
             {
-                var r = Family.Send("Overlay", "flash " + text, 2000);
+                var r = Program.Quiet ? null : Family.Send("Overlay", "flash " + text, 2000);
                 if (r == null || !(r == "ok" || r.StartsWith("ok "))) Dispatcher.BeginInvoke(new Action(() => toast.Flash(text)));
             }) { IsBackground = true }.Start();
         }
@@ -937,7 +1004,7 @@ namespace HallowClips
         }
         void Mark()
         {
-            if (!rec.Running && session == null) { toast.Flash("Not recording right now"); return; }
+            if (!rec.Running && session == null) { toast.Flash(PausedFor != null ? PausedMsg : "Not recording right now"); return; }
             marks.Add(DateTime.Now); marks.RemoveAll(m => m < DateTime.Now.AddHours(-12));
             Announce("Marker added");
         }
@@ -1038,12 +1105,14 @@ namespace HallowClips
         }
         void SetupTray()
         {
-            tray = new WF.NotifyIcon { Text = "Hallow Clips", Visible = true };
+            tray = new WF.NotifyIcon { Text = "Hallow Clips", Visible = !Program.Quiet };
             try { tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); } catch { tray.Icon = System.Drawing.SystemIcons.Application; }
             var menu = new WF.ContextMenuStrip();
             var open = new WF.ToolStripMenuItem("Open Hallow Clips"); open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold); open.Click += (s, e) => ShowFromTray(); menu.Items.Add(open);
             var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => SaveClip(null))); menu.Items.Add(save);
             traySession = new WF.ToolStripMenuItem("Record session   (Ctrl+Alt+R)"); traySession.Click += (s, e) => Dispatcher.BeginInvoke(new Action(ToggleSession)); menu.Items.Add(traySession);
+            trayAnyway = new WF.ToolStripMenuItem("Record anyway this session") { Visible = false, ToolTipText = "Discord Clips is recording this game - record with Hallow Clips too, until the game closes" };   // v1.11
+            trayAnyway.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => { if (DiscordChoice) SetRecordAnyway(!recordAnyway); })); menu.Items.Add(trayAnyway);
             menu.Items.Add(new WF.ToolStripSeparator());
             var quit = new WF.ToolStripMenuItem("Quit"); quit.Click += (s, e) => Quit(); menu.Items.Add(quit);
             tray.ContextMenuStrip = menu;

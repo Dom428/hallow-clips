@@ -1,4 +1,4 @@
-# Hallow Clips
+﻿# Hallow Clips
 
 Instant replay for your games - part of the Hallow family with [Hallow Hub](https://github.com/Dom428/hallow-hub), [Hallow Mixer](https://github.com/Dom428/hallow-mixer), [Hallow Vault](https://github.com/Dom428/hallow-vault), [Hallow Overlay](https://github.com/Dom428/hallow-overlay), [Hallow Remote](https://github.com/Dom428/hallow-remote) and [Hallow Toolkit](https://github.com/Dom428/hallow-toolkit).
 
@@ -12,6 +12,7 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 - **Ctrl+Alt+P** screenshot (PNG in the game's Screenshots folder), **Ctrl+Alt+B** marker - markers become MP4 chapters and jump points in Trim
 - Updates itself from GitHub releases (asks first, checks the SHA-256; FFmpeg is never part of an update)
 - **Ctrl+Alt+R** records a whole session (start / stop) next to the replay buffer
+- **Steps aside for Discord Clips** (1.11): while Discord's own Clips (`discord_clips.exe`) records the same game, two hardware encoders would run at once - Clips pauses its replay buffer instead (default) and starts again by itself a few seconds after Discord Clips stops. Recording is told by the process and, where Windows has them, its GPU Engine *VideoEncode* counters (an idle Discord Clips doesn't count). Settings: *When Discord Clips is also recording* - *Let Discord record - pause Hallow Clips* / *Keep both recording*; *Record anyway this session* in the menu and the main window lasts until the game closes. Ctrl+Alt+S then says Discord Clips is recording.
 - H.264, or HEVC / AV1 for smaller files when FFmpeg and the graphics card can (checked with a one-frame test encode)
 - Optional space limit for the clips folder: the oldest non-favourites go to the Recycle Bin
 - Trim clips without re-encoding, **Copy for Discord** (re-encoded under 10 MB and put on the clipboard), rename, favourites
@@ -27,6 +28,7 @@ Uses [FFmpeg](https://ffmpeg.org) (LGPL build from BtbN/FFmpeg-Builds), download
 - `%LOCALAPPDATA%\HallowClips\status.json`: recording state, current game (name and install folder), clip length, folder and the 30 newest clips (file, game, the game's install folder, time, size, length, thumbnail, favourite). Written atomically when something changes.
 - After a save, Hallow Overlay shows *Clip saved* when it runs.
 - v1.5 One Hallow icon: `open`, `menu` (Save clip, Record session, Replay buffer, Open clips folder), `invoke <id>`, `quit`. With *Use the Hallow icon* on (default), Clips asks Hub `tray-host` every 5 s and hides its own tray icon while Hub hosts the family icon; balloons then go through Hub `notify`. `status.json` has `trayHosted`.
+- v1.11: `status` / `status.json` have `pausedFor` (`"Discord Clips"` while Clips stands aside for it, otherwise `null`); `menu` adds `anyway` (*Record anyway this session*, ticked when on) while Discord Clips records the game; `save` then replies `error Discord Clips is recording this game - Hallow Clips is paused`.
 - v1.6: *Use the Hallow accent* (default on) takes the accent from `%APPDATA%\Hallow\theme.json` (Hallow Toolkit) and follows it live. Crash reports go to `%LOCALAPPDATA%\HallowClips\crashes` (newest 20, never sent); `status` has `lastCrash`.
 - Used by: Hallow Remote (save a clip from your phone), Hallow Overlay (*Clip saved*), Hallow Hub (this game's clips on its page), Hallow Toolkit (opt-in Discord post of new clips - the webhook stays in Toolkit).
 
