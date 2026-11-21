@@ -1,4 +1,4 @@
-﻿# Hallow Clips
+# Hallow Clips
 
 Instant replay for your games - part of the Hallow family with [Hallow Hub](https://github.com/Dom428/hallow-hub), [Hallow Mixer](https://github.com/Dom428/hallow-mixer), [Hallow Vault](https://github.com/Dom428/hallow-vault), [Hallow Overlay](https://github.com/Dom428/hallow-overlay), [Hallow Remote](https://github.com/Dom428/hallow-remote) and [Hallow Toolkit](https://github.com/Dom428/hallow-toolkit).
 
@@ -19,6 +19,7 @@ Instant replay for your games - part of the Hallow family with [Hallow Hub](http
 - Trim clips without re-encoding, **Copy for Discord** (re-encoded under 10, 25 or 50 MB - variable bitrate, up to 1440p60 when there's room - and put on the clipboard), rename, favourites
 - **Clip library** (1.12): search by title, file name or game (accents and case ignored), filter by game, date (today / 7 days / 30 days) and favourites, *Show more* for older clips; **Select** several clips and move them to the Recycle Bin together (an in-app question first, with the total size and any favourites named); **Storage** shows the space each game's folder uses (clips, sessions, GIFs, screenshots) and the free space on the drive - click a game to see only its clips
 - **Light and dark mode** (1.14): follows `mode` in `%APPDATA%\Hallow\theme.json` (Hallow Toolkit: *Light* / *Dark* / *Same as Windows*, which follows Windows' app setting live); Settings > *Look*: *Follow Hallow* (default), *Light* or *Dark* just for Clips. Every window, menu, tooltip and the title bar follow; accent text is darkened in light mode so it stays readable (4.5:1)
+- **Light mode readability fixes** (1.15): slider knobs are white with an accent ring and the filled part of a slider uses the accent; filled buttons and chips follow the Hallow family accent rule (the fill is darkened only when no text colour reaches 4.5:1 on it, e.g. violet, and the text on it is dark or white, whichever reads better); accent text is darkened on the darkest light surface (#EEEAF5), the same rule as Hallow Toolkit; warnings use the text amber (#8F5B00); windows that are already open (the editor, dialogs) switch look live
 - Sound locked to the clock, so it stays in step with the picture however long you play
 - Hallow family link: other Hallow apps save a clip and list your clips (see below)
 

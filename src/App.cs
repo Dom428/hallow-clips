@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.14.0.0")]
-[assembly: AssemblyFileVersion("1.14.0.0")]
+[assembly: AssemblyVersion("1.15.0.0")]
+[assembly: AssemblyFileVersion("1.15.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.14";
+        public const string Version = "1.15";
         // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
         public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
@@ -237,11 +237,20 @@ namespace HallowClips
             {
                 var hex = Accent.Pick(S.UseHallowAccent); var light = HallowClips.Look.Resolve(S.Look, Accent.FilePath);
                 if (hex == Accent.Hex && light == HallowClips.Look.IsLight) return;   // v1.14: a change of light / dark alone re-themes too
+                var was = Retheme.Now(); var oldTheme = Application.Current.Resources.MergedDictionaries.FirstOrDefault();
                 Accent.Hex = hex; HallowClips.Look.IsLight = light; Program.LoadTheme(Application.Current);
+                RethemeOpen(was, oldTheme);   // v1.15: open dialogs and the editor follow too
                 Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); HallowClips.Look.TitleBars();
                 var st = statusText != null ? statusText.Text : ""; Content = Build(); UpdateState(); FillClips(); SessionState(); Status(st);
             }
             catch { }
+        }
+        // v1.15: every other open window (editor, trim, dialogs, What's new) gets the new styles and colours in place
+        public static void RethemeOpen(Retheme.State was, ResourceDictionary oldTheme)
+        {
+            var now = Application.Current.Resources.MergedDictionaries.FirstOrDefault(); if (now == null) return;
+            var map = Retheme.ColorMap(was, Retheme.Now()); var keys = Retheme.StyleKeys(oldTheme);
+            foreach (Window w in Application.Current.Windows) if (!(w is MainWindow) && !(w is Toast)) try { Retheme.Apply(w, keys, now, map); } catch { }
         }
         // ---- v1.6: after a crash, a notice once per report (when the window is open)
         void ShowCrashNotice()

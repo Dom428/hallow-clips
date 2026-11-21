@@ -17,7 +17,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="Thumb">
                     <Grid Width="20" Height="20" Background="Transparent">
-                        <Ellipse x:Name="k" Width="18" Height="18" Fill="#ECE8F4" Stroke="#16121C" StrokeThickness="3"/>
+                        <Ellipse x:Name="k" Width="18" Height="18" Fill="#ECE8F3" Stroke="#16121D" StrokeThickness="3"/>
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="k" Property="Fill" Value="#FFFFFD"/></Trigger>
@@ -44,7 +44,7 @@
         <Setter Property="Orientation" Value="Vertical"/>
         <Setter Property="Minimum" Value="0"/><Setter Property="Maximum" Value="100"/>
         <Setter Property="SmallChange" Value="1"/><Setter Property="LargeChange" Value="10"/>
-        <Setter Property="IsMoveToPointEnabled" Value="True"/>
+        <Setter Property="IsMoveToPointEnabled" Value="True"/><!--light:fader-->
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Slider">
@@ -59,7 +59,7 @@
     </Style>
     <Style x:Key="HFader" TargetType="Slider">
         <Setter Property="Orientation" Value="Horizontal"/>
-        <Setter Property="IsMoveToPointEnabled" Value="True"/>
+        <Setter Property="IsMoveToPointEnabled" Value="True"/><!--light:fader-->
         <Setter Property="SmallChange" Value="1"/><Setter Property="LargeChange" Value="10"/>
         <Setter Property="Template">
             <Setter.Value>
@@ -122,7 +122,7 @@
                         </StackPanel>
                     </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hl" Property="Opacity" Value="0.07"/><Setter TargetName="b" Property="BorderBrush" Value="#55496A"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hl" Property="Opacity" Value="0.07"/><!--light:hover--><Setter TargetName="b" Property="BorderBrush" Value="#55496A"/></Trigger>
                         <Trigger Property="IsPressed" Value="True"><Setter TargetName="hl" Property="Opacity" Value="0.14"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.55"/></Trigger>
                         <Trigger Property="Tag" Value="icon"><Setter TargetName="cp" Property="Visibility" Value="Collapsed"/><Setter TargetName="ic" Property="Margin" Value="0"/></Trigger>

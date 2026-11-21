@@ -54,15 +54,26 @@ namespace HallowClips
         // v1.14: the accent for text and thin lines - darkened in light mode so it stays readable (4.5:1)
         public static string TextHex { get { return Look.IsLight ? Look.TextAccent(Hex) : Hex; } }
         public static SolidColorBrush Brush { get { var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(TextHex)); b.Freeze(); return b; } }
-        // the real accent, for filled areas (bars, buttons)
-        public static SolidColorBrush FillBrush { get { var b = new SolidColorBrush(Color); b.Freeze(); return b; } }
+        // the accent for filled areas (bars, buttons, chips): the real accent; v1.15: in light mode the family fill rule (darkened when
+        // neither dark nor white text would reach 4.5:1 on it, e.g. violet), and the text on it is dark or white, whichever reads better
+        public static string FillHex { get { return Look.IsLight ? Look.AccentFill(Hex) : Hex; } }
+        public static string FillTextHex { get { return Look.IsLight ? Look.FillText(FillHex) : "#1A0E04"; } }
+        public static SolidColorBrush FillBrush { get { var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(FillHex)); b.Freeze(); return b; } }
         // Theme.xaml with the accent swapped in, and in light mode the light palette (v1.14). Tokens in Theme.xaml:
-        // #F07821 = accent as a thin line / caret, #FFFFFE = the hover overlay (white on dark, black on light), #FFFFFD = slider knob hover.
+        // #F07821 = accent as a thin line / caret, #FFFFFE = the hover overlay (white on dark, black on light), #FFFFFD = slider knob hover,
+        // v1.15: #ECE8F3 = slider knob, #16121D = slider knob ring, #1A0E04 = text on an accent fill, <!--light:fader--> = the slider's
+        // filled part in light mode (the darkened accent; dark keeps WPF's own), <!--light:hover--> = hover overlay strength (fill x 0.9).
         public static string Themed(string xaml)
         {
             var light = Look.IsLight;
-            xaml = xaml.Replace(Own, Hex).Replace(OwnLight, LightHex).Replace("#F07821", TextHex)
-                .Replace("#FFFFFE", light ? "#000000" : "#FFFFFF").Replace("#FFFFFD", light ? Look.LLilac : "#FFFFFF");
+            if (light)   // v1.15: accent fills follow the family rule; knobs are white with an accent ring
+                xaml = xaml.Replace(Own, FillHex).Replace(OwnLight, FillHex).Replace("#1A0E04", FillTextHex)
+                    .Replace("#ECE8F3", Look.LPanel).Replace("#16121D", "#F07821").Replace("#FFFFFD", Look.LPanel2)
+                    .Replace("<!--light:fader-->", "<Setter Property=\"Foreground\" Value=\"#F07821\"/>")
+                    .Replace("Value=\"0.07\"/><!--light:hover-->", "Value=\"0.10\"/>");
+            else
+                xaml = xaml.Replace(Own, Hex).Replace(OwnLight, LightHex).Replace("#ECE8F3", "#ECE8F4").Replace("#16121D", "#16121C").Replace("#FFFFFD", "#FFFFFF");
+            xaml = xaml.Replace("#F07821", TextHex).Replace("#FFFFFE", light ? "#000000" : "#FFFFFF");
             return light ? Look.Swap(xaml, Pal.Map) : xaml;
         }
     }
@@ -94,7 +105,7 @@ namespace HallowClips
             { "#FF6B73", Look.LRed },     // stop session
             { "#FF8A90", Look.LRed },     // Recycle Bin
             { "#E0A030", Look.LAmber },   // paused dot
-            { "#FFB060", Look.LAmber },   // favourites warning
+            { "#FFB060", Look.LAmberText },   // favourites warning (small text; v1.15: the text amber)
             { "#4C9AFF", "#2F74D8" },     // slow-motion part on the editor strip
         };
         public static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(Look.Pick(hex, Map))); }

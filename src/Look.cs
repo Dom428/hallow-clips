@@ -20,7 +20,8 @@ namespace HallowClips
         public const string Follow = "follow", Light = "light", Dark = "dark";
         // the light palette (spec); dark = each app's own Theme.xaml values, unchanged
         public const string LBg = "#F6F4FA", LPanel = "#FFFFFF", LPanel2 = "#EEEAF5", LBorder = "#DAD3E6", LText = "#1E1A26", LMuted = "#6B6478", LLilac = "#7A5CC0",
-            LGreen = "#1E8E4F", LAmber = "#A66A00", LRed = "#C2333F";
+            LGreen = "#1E8E4F", LAmber = "#A66A00", LRed = "#C2333F",
+            LGreenText = "#1B7A44", LAmberText = "#8F5B00";   // v1.15: status as small text (the icon values are just under 4.5:1)
 
         public static bool IsLight;   // what the windows use now
 
@@ -78,15 +79,30 @@ namespace HallowClips
         }
         public static double Contrast(string a, string b) { double x = Lum(C(a)), y = Lum(C(b)); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
 
-        // the accent for TEXT and thin lines on light backgrounds: darkened in HSL until it reaches 4.5:1 on white and on the light
-        // background (default orange -> about #B85410). Unchanged when it already does.
-        public static string TextAccent(string hex)
+        // v1.15: the family accent rule (same as Hallow Toolkit 5.16, HallowFamily.ps1 Get-LightTextAccent / Get-AccentFillText / Get-LightAccentFill).
+        // Darken: unchanged if it already reaches `min` on `on`; else HSL (System.Drawing hue / saturation / brightness), L down 0.01 per step.
+        public static string Darken(string hex, double min, string on)
         {
-            var c = C(hex); double h, s, l; ToHsl(c, out h, out s, out l);
+            if (Contrast(hex, on) >= min) return hex.ToUpperInvariant();
+            var c = C(hex); var d = System.Drawing.Color.FromArgb(c.R, c.G, c.B);
+            double h = d.GetHue() / 360.0, s = d.GetSaturation(), l = d.GetBrightness();
             var cur = hex.ToUpperInvariant();
-            while ((Contrast(cur, LPanel) < 4.5 || Contrast(cur, LBg) < 4.5) && l > 0) { l = Math.Max(0, l - 0.005); cur = H(FromHsl(h, s, l)); }
+            while (l > 0)
+            {
+                l = Math.Max(0.0, l - 0.01); cur = H(FromHsl(h, s, l));
+                if (Contrast(cur, on) >= min) break;
+            }
             return cur;
         }
+        // text on an accent fill: dark text or white, whichever reads better
+        public static string FillText(string fill) { return Contrast(fill, LText) >= Contrast(fill, "#FFFFFF") ? LText : "#FFFFFF"; }
+        // light-mode fill for accent buttons and chips: the real accent, unless its text would be under 4.5:1 (then darkened on white)
+        public static string AccentFill(string accent) { return Contrast(accent, FillText(accent)) >= 4.5 ? accent.ToUpperInvariant() : Darken(accent, 4.5, "#FFFFFF"); }
+        // the fill a bit darker for hover (x 0.9 per channel)
+        public static string FillHover(string fill) { var c = C(fill); Func<byte, byte> k = v => (byte)Math.Round(v * 0.9); return H(Color.FromRgb(k(c.R), k(c.G), k(c.B))); }
+        // the accent for TEXT and thin lines on light backgrounds: darkened until it reaches 4.5:1 on #EEEAF5 (the darkest light
+        // surface, so it also reads on the background and on white). Unchanged when it already does.
+        public static string TextAccent(string hex) { return Darken(hex, 4.5, LPanel2); }
         static void ToHsl(Color c, out double h, out double s, out double l)
         {
             double r = c.R / 255.0, g = c.G / 255.0, b = c.B / 255.0, mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));

@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.15
+- Light mode readability fixes: slider knobs are white with an accent ring, filled buttons keep readable text with any accent (e.g. violet), warnings use a darker amber.
+- Windows that are already open, like the clip editor, switch between light and dark right away too.
+
 WHAT'S NEW IN 1.14
 - Light and dark mode: Clips follows the look picked in Hallow Toolkit (Light, Dark or Same as Windows).
 - Settings > Look: Follow Hallow, Light or Dark just for Clips. Every window, menu and the title bar follow.
