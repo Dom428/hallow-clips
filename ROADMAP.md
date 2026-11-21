@@ -17,6 +17,7 @@
 | **1.10** | Webcam overlay (corner, size), replay buffer in memory (spares the SSD), settings behind a Settings button |
 | **1.11** | Steps aside for Discord Clips (discord_clips.exe running and its GPU video encoder busy): pauses the replay buffer and resumes by itself; setting pause / keep both, Record anyway this session (menu, `anyway`), `pausedFor` in status |
 | **1.12** | Clip library: search (title, name, game), filters for game, date and favourites, Show more; Select several clips and move them to the Recycle Bin after an in-app question; storage per game with free space; Copy for Discord under 10 / 25 / 50 MB; pipe `storage` and `find` |
+| **1.13** | Editor: picture strip on the timeline, frame-exact trim (re-encoded) next to the lossless keyframe trim, cut out a middle part, slow motion (0.5x / 0.25x) or 2x for a part, blur a box (names, chat) - one re-encode on the graphics card, the original stays |
 
 ## Next
 ### Gaps vs ShadowPlay / Medal
@@ -30,6 +31,7 @@ What NVIDIA ShadowPlay (NVIDIA app), Medal.tv, Outplayed and OBS's replay buffer
 - Replay buffer in memory (OBS) - **buildable**: segments handed over pipes instead of files (1.10)
 - Search and filter the clip library, delete several clips at once, storage per game (NVIDIA app gallery, Medal library) - **buildable** (1.12)
 - Bigger share sizes for Discord (Nitro / boosted servers allow more than 10 MB) - **buildable**: Copy for Discord under 10, 25 or 50 MB (1.12)
+- An editor: frame-exact cuts, cut out a middle part, slow motion, blur a name (Medal editor, Outplayed, NVIDIA app) - **buildable**: one FFmpeg graph, re-encoded once (1.13)
 - Window-only / game capture instead of the whole screen (OBS game capture) - **not now**: OBS hooks into the game (anti-cheat risk); Windows' own window capture needs a newer FFmpeg filter that isn't tested here
 - HDR capture with tone mapping (ShadowPlay, OBS) - **not now**: needs an HDR screen to test; there isn't one here
 - Hosted share links, cloud library, social feed (Medal, Outplayed) - **not buildable**: needs a server, accounts and storage

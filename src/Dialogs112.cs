@@ -18,7 +18,7 @@ namespace HallowClips
             int favs = clips.Count(f => favorite != null && favorite(f.FullName));
             var sp = new StackPanel { Margin = new Thickness(26, 20, 26, 20) };
             sp.Children.Add(Heading("Move " + (n == 1 ? "this clip" : n + " clips") + " to the Recycle Bin?"));
-            sp.Children.Add(new TextBlock { Text = ClipIndex.Size(bytes) + (favs > 0 ? "   ·   " + (favs == 1 ? "1 of them is a favourite" : favs + " of them are favourites") : ""), FontWeight = FontWeights.SemiBold, Foreground = favs > 0 ? B("#FFB060") : (Brush)FindResource("Text"), Margin = new Thickness(0, 0, 0, 10) });
+            sp.Children.Add(new TextBlock { Text = ClipIndex.Size(bytes) + (favs > 0 ? "   \u00B7   " + (favs == 1 ? "1 of them is a favourite" : favs + " of them are favourites") : ""), FontWeight = FontWeights.SemiBold, Foreground = favs > 0 ? B("#FFB060") : (Brush)FindResource("Text"), Margin = new Thickness(0, 0, 0, 10) });
             var list = new StackPanel();
             const int max = 8;
             foreach (var f in clips.Take(max))
@@ -28,7 +28,7 @@ namespace HallowClips
                 DockPanel.SetDock(when, Dock.Right); d.Children.Add(when);
                 var nm = new StackPanel { Orientation = Orientation.Horizontal };
                 if (favorite != null && favorite(f.FullName)) { var st = Icons.Make("star", 11, Accent.Brush); st.Margin = new Thickness(0, 0, 6, 0); st.VerticalAlignment = VerticalAlignment.Center; nm.Children.Add(st); }
-                nm.Children.Add(new TextBlock { Text = (f.Directory != null ? f.Directory.Name + "   ·   " : "") + name(f), TextTrimming = TextTrimming.CharacterEllipsis });
+                nm.Children.Add(new TextBlock { Text = (f.Directory != null ? f.Directory.Name + "   \u00B7   " : "") + name(f), TextTrimming = TextTrimming.CharacterEllipsis });
                 d.Children.Add(nm); list.Children.Add(d);
             }
             if (n > max) list.Children.Add(new TextBlock { Text = "and " + (n - max) + " more", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(0, 4, 0, 0) });

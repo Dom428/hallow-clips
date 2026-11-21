@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.12.0.0")]
-[assembly: AssemblyFileVersion("1.12.0.0")]
+[assembly: AssemblyVersion("1.13.0.0")]
+[assembly: AssemblyFileVersion("1.13.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.12";
+        public const string Version = "1.13";
         // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
         public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
@@ -775,7 +775,7 @@ namespace HallowClips
                 var star = ib("Favourite", fav ? "Favourite - click to unmark" : "Mark as a favourite (never removed by the space limit)");
                 star.Foreground = fav ? Accent.Brush : (Brush)FindResource("Muted");
                 star.Click += (s, e) => { S.SetFavorite(fi.FullName, !S.IsFavorite(fi.FullName)); S.Save(); FillClips(); };
-                var trim = ib("Trim", "Trim - keep only the best part (no re-encoding)"); trim.Click += (s, e) => TrimClip(fi.FullName);
+                var trim = ib("Trim", "Edit - trim (no re-encoding), cut out a part, slow motion, blur a box"); trim.Click += (s, e) => TrimClip(fi.FullName);
                 var discord = ib("Copy for Discord", discordTip); discord.Click += (s, e) => CopyForDiscord(fi.FullName, S.DiscordMB);
                 var ren = ib("Rename", "Rename"); ren.Click += (s, e) => RenameClip(fi.FullName);
                 var del = ib("Delete", "Move to the Recycle Bin");
@@ -803,7 +803,7 @@ namespace HallowClips
                 t.Children.Add(new TextBlock { Text = title ?? (own ? name : game), FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name, TextTrimming = TextTrimming.CharacterEllipsis });
                 if (title != null) own = true;
                 var len = DurationOf(fi);
-                t.Children.Add(new TextBlock { Text = (own ? game + "   ·   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   ·   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   ·   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, TextTrimming = TextTrimming.CharacterEllipsis });
+                t.Children.Add(new TextBlock { Text = (own ? game + "   \u00B7   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   \u00B7   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   \u00B7   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, TextTrimming = TextTrimming.CharacterEllipsis });
                 dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
             }
             if (hits.Count > shown.Count)
@@ -890,7 +890,7 @@ namespace HallowClips
             if (selectBar == null || selText == null) return;
             selectBar.Visibility = selecting ? Visibility.Visible : Visibility.Collapsed;
             long bytes = 0; foreach (var f in selected) try { bytes += new FileInfo(f).Length; } catch { }
-            selText.Text = selected.Count == 0 ? "Tick clips (or click a row) to pick them" : selected.Count + " clip" + (selected.Count == 1 ? "" : "s") + " picked   ·   " + ClipIndex.Size(bytes);
+            selText.Text = selected.Count == 0 ? "Tick clips (or click a row) to pick them" : selected.Count + " clip" + (selected.Count == 1 ? "" : "s") + " picked   \u00B7   " + ClipIndex.Size(bytes);
             delSel.IsEnabled = selected.Count > 0;
         }
         void DeleteSelected()
@@ -934,7 +934,7 @@ namespace HallowClips
             long total = use.Sum(u => u.Bytes);
             var head = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var drive = ""; try { drive = Path.GetPathRoot(Path.GetFullPath(root)).TrimEnd('\\'); } catch { }
-            var right = new TextBlock { Text = free >= 0 ? ClipIndex.Size(free) + " free on " + drive + (S.SpaceLimitGB > 0 ? "   ·   space limit " + S.SpaceLimitGB + " GB" : "") : "", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center };
+            var right = new TextBlock { Text = free >= 0 ? ClipIndex.Size(free) + " free on " + drive + (S.SpaceLimitGB > 0 ? "   \u00B7   space limit " + S.SpaceLimitGB + " GB" : "") : "", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center };
             DockPanel.SetDock(right, Dock.Right); head.Children.Add(right);
             head.Children.Add(new TextBlock { Text = "Clips use " + ClipIndex.Size(total), FontWeight = FontWeights.SemiBold, FontSize = 13.5 });
             sp.Children.Add(head);
@@ -957,7 +957,7 @@ namespace HallowClips
                 double frac = Math.Max(0.01, g.Bytes / (double)max);
                 bg.SizeChanged += (s, e) => fill.Width = Math.Max(4, e.NewSize.Width * frac);
                 if (Snap.On) fill.Width = Math.Max(4, 400 * frac);
-                var sz = new TextBlock { Text = ClipIndex.Size(g.Bytes) + "   ·   " + g.Clips + " clip" + (g.Clips == 1 ? "" : "s"), Foreground = (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+                var sz = new TextBlock { Text = ClipIndex.Size(g.Bytes) + "   \u00B7   " + g.Clips + " clip" + (g.Clips == 1 ? "" : "s"), Foreground = (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
                 Grid.SetColumn(bg, 1); Grid.SetColumn(sz, 2);
                 row.Children.Add(n); row.Children.Add(bg); row.Children.Add(sz);
                 if (real) row.MouseLeftButtonUp += (s, e) => { filter.Game = on ? "" : g.Game; showCount = PageSize; FillClips(); storagePanel.Child = StorageView(use, free, root); };
@@ -1115,11 +1115,14 @@ namespace HallowClips
         void TrimClip(string clip, string ff, ClipOps.Info info)
         {
             if (info.Duration <= 0) { Status("Couldn't read that clip."); return; }
-            var w = new TrimWindow(clip, ff, info) { Owner = this }; w.ShowDialog();
+            var w = new EditWindow(clip, ff, info) { Owner = this }; w.ShowDialog();   // v1.13: the editor
             if (!w.Ok) { Status(""); return; }
-            double a = w.Start, b = w.End;
-            Work(clip, "Trimming " + Path.GetFileName(clip) + "...", () => { string err; var f = ClipOps.Trim(ff, clip, info.Codec, a, b, out err); return f ?? "!" + err; },
-                r => { if (r.StartsWith("!")) Status(r.Substring(1)); else { if (S.IsFavorite(clip)) { S.SetFavorite(r, true); S.Save(); } Status("Saved the trimmed copy: " + Path.GetFileName(r) + " (the original is still there)."); } });
+            var plan = w.Result(); var venc = Editor.VideoArgs(ff, S.Quality);
+            Work(clip, (plan.Reencode ? "Editing " : "Trimming ") + Path.GetFileName(clip) + "...", () =>
+            {
+                string err; var f = Editor.Run(ff, clip, info, plan, venc, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err); return f ?? "!" + err;
+            },
+                r => { if (r.StartsWith("!")) Status(r.Substring(1)); else { if (S.IsFavorite(clip)) { S.SetFavorite(r, true); S.Save(); } Status("Saved " + (plan.Reencode ? "the edited copy: " : "the trimmed copy: ") + Path.GetFileName(r) + " (the original is still there)."); } });
         }
         void CopyForDiscord(string clip, int size)
         {
@@ -1361,7 +1364,22 @@ namespace HallowClips
             if (clip != null)
             {
                 Snap.Save(new RenameWindow(clip.FullName), System.IO.Path.Combine(dir, "rename.png"), 480, 0);
-                if (S.Ffmpeg != null) Snap.Save(new TrimWindow(clip.FullName, S.Ffmpeg, ClipOps.Inspect(S.Ffmpeg, clip.FullName)), System.IO.Path.Combine(dir, "trim.png"), 580, 0);
+                if (S.Ffmpeg != null)
+                {
+                    // v1.13: the editor - plain, and with cut, slow motion and blur on (picture and strip made once with FFmpeg)
+                    var ci = ClipOps.Inspect(S.Ffmpeg, clip.FullName);
+                    var tmpDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "hallowclips-snap-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(tmpDir);
+                    var stripJpg = Editor.Strip(S.Ffmpeg, clip.FullName, ci, 12, System.IO.Path.Combine(tmpDir, "strip.jpg"));
+                    var picJpg = System.IO.Path.Combine(tmpDir, "pic.jpg"); string e1; int x1;
+                    ClipOps.Run(S.Ffmpeg, "-hide_banner -loglevel error -y -ss 1 -i \"" + clip.FullName + "\" -frames:v 1 -vf scale=1096:-2 \"" + picJpg + "\"", 30000, out e1, out x1);
+                    foreach (var look in new[] { "edit", "edit-all" })
+                    {
+                        var ew = new EditWindow(clip.FullName, S.Ffmpeg, ci); ew.SetStrip(stripJpg); if (File.Exists(picJpg)) ew.SetPicture(picJpg);
+                        if (look == "edit-all") ew.SnapLook(EditWindow.Corner("bl"));
+                        Snap.Save(ew, System.IO.Path.Combine(dir, look + ".png"), 600, 0);
+                    }
+                    try { Directory.Delete(tmpDir, true); } catch { }
+                }
                 Snap.Save(new PromptWindow("Clip title", "Shown in the list and kept inside the MP4 (players show it too). Leave it empty to remove it.", "Big play", "Save title"), System.IO.Path.Combine(dir, "title.png"), 480, 0);
                 Snap.Save(new ThumbWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "thumb.png"), 560, 0);
                 Snap.Save(new GifWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "gif.png"), 560, 0);

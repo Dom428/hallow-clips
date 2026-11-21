@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.13
+- The trim window is now an editor: a picture strip along the timeline, frame-exact cuts, cut out a part in the middle,
+  slow motion (or 2x) for a part, and blur a box over names or chat. The original clip always stays.
+
 WHAT'S NEW IN 1.12
 - Search your clips (title, name or game) and filter by game, date and favourites; Show more reaches older clips.
 - Select several clips and move them to the Recycle Bin together (asks first). Storage shows the space each game uses.
