@@ -7,6 +7,11 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.12
+- Search your clips (title, name or game) and filter by game, date and favourites; Show more reaches older clips.
+- Select several clips and move them to the Recycle Bin together (asks first). Storage shows the space each game uses.
+- Copy for Discord under 10, 25 or 50 MB (Settings, or the ... menu on a clip).
+
 WHAT'S NEW IN 1.11
 - Steps aside for Discord Clips: while Discord's own Clips records the same game, Hallow Clips pauses (one recorder
   on the graphics card instead of two) and starts again by itself when it stops.

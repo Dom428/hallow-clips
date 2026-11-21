@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.12", new[] { "Find clips fast: search by title, name or game, and filter by game, date (today, 7 or 30 days) and favourites - Show more reaches older clips", "Select: tick several clips and move them to the Recycle Bin together (asks first). Storage shows how much space each game's clips use", "Copy for Discord under 10, 25 or 50 MB (Settings, or the ... menu): more room gives a sharper, smoother copy" }),
             Tuple.Create("1.11", new[] { "Steps aside for Discord Clips: while Discord's own Clips records the same game, Hallow Clips pauses (one recorder on the graphics card, not two) and starts again by itself when it stops", "Settings > When Discord Clips is also recording: pause Hallow Clips, or keep both; Record anyway this session is in the menu" }),
             Tuple.Create("1.10", new[] { "Webcam in a corner of your clips and sessions (Settings > Webcam, pick the corner and size)", "Keep the replay in memory instead of on disk to spare your SSD (Settings)", "Settings fold away behind the Settings button, so your clips get the room" }),
             Tuple.Create("1.9", new[] { "Own sound tracks: the game and Discord (or Spotify, your browser, TeamSpeak) each get their own track, next to everything + your mic", "Sound in exports: pick what goes into Discord copies, phone versions and highlight reels - e.g. game only, without Discord or your mic" }),

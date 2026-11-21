@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.11.0.0")]
-[assembly: AssemblyFileVersion("1.11.0.0")]
+[assembly: AssemblyVersion("1.12.0.0")]
+[assembly: AssemblyFileVersion("1.12.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.11";
+        public const string Version = "1.12";
         // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
         public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
@@ -289,6 +289,20 @@ namespace HallowClips
                 return err == null ? "ok" : "error " + err;
             }
             if (cmd == "quit") { new Timer(_ => Dispatcher.BeginInvoke(new Action(Quit)), null, 300, Timeout.Infinite); return "ok"; }   // reply first, then exit
+            // v1.12: storage per game, and a clip search (newest first, at most 50) for other Hallow apps
+            if (cmd == "storage")
+            {
+                var root = S.ClipsFolder; var use = ClipIndex.SizeByGame(root);
+                return "ok " + Family.Json(new Dictionary<string, object> { { "folder", root }, { "totalBytes", use.Sum(u => u.Bytes) }, { "freeBytes", ClipIndex.FreeBytes(root) },
+                    { "games", use.Select(u => (object)new Dictionary<string, object> { { "game", u.Game }, { "bytes", u.Bytes }, { "clips", u.Clips } }).ToList() } });
+            }
+            if (cmd == "find")
+            {
+                var q = sp < 0 ? "" : line.Substring(sp + 1).Trim(); var root = S.ClipsFolder; List<object> hits = null;
+                if (!OnUi(() => hits = ClipIndex.Apply(ClipIndex.All(root), root, new ClipIndex.Filter { Query = q }, TitleOf, S.IsFavorite, DateTime.Now).Take(50)
+                    .Select(f => (object)new Dictionary<string, object> { { "file", f.FullName }, { "game", ClipIndex.GameOf(f.FullName, root) }, { "title", TitleOf(f) }, { "time", Family.Time(f.LastWriteTime) }, { "sizeBytes", f.Length } }).ToList())) return "error busy";
+                return "ok " + Family.Json(new Dictionary<string, object> { { "query", q }, { "clips", hits } });
+            }
             return "error unknown command";
         }
         bool OnUi(Action a) { var op = Dispatcher.BeginInvoke(a); return op.Wait(TimeSpan.FromSeconds(5)) == DispatcherOperationStatus.Completed; }
@@ -586,6 +600,10 @@ namespace HallowClips
                 webcamRow.ToolTip = "Your webcam in a corner of clips and sessions. A session started while the replay uses the camera records without it (a camera can only be opened once).";
             };
             FillWebcamRow();
+            // v1.12: Copy for Discord size (10 MB = free Discord; bigger limits come with Nitro or boosted servers)
+            var dsz = chipRow("Copy for Discord", ClipIndex.DiscordSizes.Select(m => Tuple.Create(m.ToString(), "Under " + m + " MB")), () => ClipIndex.DiscordMB(S.DiscordMB).ToString(), v => { S.DiscordMB = int.Parse(v); FillClips(); }, false);
+            ((FrameworkElement)dsz).ToolTip = "Discord lets you upload 10 MB for free; Nitro and boosted servers allow more. A bigger size gives a sharper, smoother copy. The ... menu on a clip has the other sizes too.";
+            set.Children.Add(dsz);
             set.Children.Add(chipRow("Sound in exports", new[] { Tuple.Create("all", "Everything + mic"), Tuple.Create("nomic", "Everything, no mic"), Tuple.Create("game", "Game only"), Tuple.Create("gamemic", "Game + mic") },
                 () => S.ExportSound ?? "all", v => { S.ExportSound = v; ClipOps.ExportChoice = v; }, false));
             // v1.11: Discord Clips records the same game with its own encoder - by default Clips steps aside
@@ -623,8 +641,23 @@ namespace HallowClips
             DockPanel.SetDock(openF, Dock.Right); ch.Children.Add(openF);
             var reel = new Button { Content = "Highlight reel", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Join several clips into one video" };
             reel.Click += (s, e) => MakeReel(); DockPanel.SetDock(reel, Dock.Right); ch.Children.Add(reel);
-            ch.Children.Add(new TextBlock { Text = "YOUR CLIPS", FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = B("#A98BE0"), VerticalAlignment = VerticalAlignment.Center });
+            // v1.12: storage per game, and picking several clips (to move them to the Recycle Bin together)
+            var storeBtn = new ToggleButton { Content = "Storage", Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 8, 0), IsChecked = showStorage, ToolTip = "How much space each game's clips use" };
+            storeBtn.Click += (s, e) => { showStorage = storeBtn.IsChecked == true; storagePanel.Visibility = showStorage ? Visibility.Visible : Visibility.Collapsed; if (showStorage) FillStorage(); };
+            DockPanel.SetDock(storeBtn, Dock.Right); ch.Children.Add(storeBtn);
+            selectBtn = new ToggleButton { Content = "Select", Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 8, 0), IsChecked = selecting, ToolTip = "Tick several clips to move them to the Recycle Bin together" };
+            selectBtn.Click += (s, e) => { selecting = selectBtn.IsChecked == true; if (!selecting) selected.Clear(); FillClips(); };
+            DockPanel.SetDock(selectBtn, Dock.Right); ch.Children.Add(selectBtn);
+            var hdr = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            hdr.Children.Add(new TextBlock { Text = "YOUR CLIPS", FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = B("#A98BE0"), VerticalAlignment = VerticalAlignment.Center });
+            countText = new TextBlock { FontSize = 11, Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) }; hdr.Children.Add(countText);
+            ch.Children.Add(hdr);
             root.Children.Add(ch);
+            root.Children.Add(BuildFilters());
+            storagePanel = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(12), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 0, 0, 10), Visibility = showStorage ? Visibility.Visible : Visibility.Collapsed };
+            DockPanel.SetDock(storagePanel, Dock.Top); root.Children.Add(storagePanel);
+            if (showStorage) FillStorage();
+            selectBar = BuildSelectBar(); DockPanel.SetDock(selectBar, Dock.Top); root.Children.Add(selectBar);
             statusText = new TextBlock { Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, Margin = new Thickness(2, 8, 2, 0), TextTrimming = TextTrimming.CharacterEllipsis };
             DockPanel.SetDock(statusText, Dock.Bottom); root.Children.Add(statusText);
             clipsList = new StackPanel();
@@ -692,16 +725,46 @@ namespace HallowClips
             }) { IsBackground = true }.Start();
         }
 
-        // ---- the clip list: newest first, with a picture from each clip
+        // ---- the clip list: newest first, with a picture from each clip. v1.12: search, game / date / favourite filters,
+        // more than 20 (Show more), and Select for several at once.
+        readonly ClipIndex.Filter filter = new ClipIndex.Filter();
+        readonly HashSet<string> selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool selecting, showStorage, fillingGames; int showCount = PageSize; const int PageSize = 20;
+        List<FileInfo> shown = new List<FileInfo>();
+        TextBlock countText, selText; ToggleButton selectBtn; Border storagePanel; FrameworkElement selectBar; ComboBox gameBox; TextBox searchBox; Button delSel;
         void FillClips()
         {
             clipsList.Children.Clear(); WriteStatus(true);
-            var files = RecentClips(20);
-            if (files.Count == 0) { clipsList.Children.Add(new TextBlock { Text = "No clips yet. Start a game and press Ctrl+Alt+S when something good happens.", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(2, 6, 0, 0) }); return; }
-            foreach (var f in files)
+            var root = S.ClipsFolder; var all = ClipIndex.All(root);
+            FillGameBox(all, root);
+            var hits = ClipIndex.Apply(all, root, filter, TitleOf, S.IsFavorite, DateTime.Now);
+            var have = new HashSet<string>(all.Select(c => c.FullName), StringComparer.OrdinalIgnoreCase);
+            selected.RemoveWhere(f => !have.Contains(f));   // gone (deleted, renamed)
+            shown = hits.Take(showCount).ToList();
+            if (countText != null) countText.Text = all.Count == 0 ? "" : filter.IsEmpty ? all.Count + " clip" + (all.Count == 1 ? "" : "s") : hits.Count + " of " + all.Count + " clips";
+            UpdateSelectBar();
+            if (all.Count == 0) { clipsList.Children.Add(new TextBlock { Text = "No clips yet. Start a game and press Ctrl+Alt+S when something good happens.", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(2, 6, 0, 0) }); return; }
+            if (hits.Count == 0)
+            {
+                var none = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 6, 0, 0) };
+                none.Children.Add(new TextBlock { Text = "No clips match - ", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center });
+                var clr = new Button { Content = "Clear filters", Style = (Style)FindResource("Btn"), Padding = new Thickness(10, 3, 10, 3) }; clr.Click += (s, e) => ClearFilters(); none.Children.Add(clr);
+                clipsList.Children.Add(none); return;
+            }
+            var discordTip = "Copy for Discord - a smaller copy under " + ClipIndex.DiscordMB(S.DiscordMB) + " MB, ready to paste (other sizes in the ... menu)";
+            foreach (var f in shown)
             {
                 var fi = f; var row = new Border { Background = (Brush)FindResource("Panel"), CornerRadius = new CornerRadius(12), Padding = new Thickness(8, 8, 12, 8), Margin = new Thickness(0, 0, 0, 8) };
                 var dp = new DockPanel();
+                if (selecting)
+                {
+                    var cb = new CheckBox { IsChecked = selected.Contains(fi.FullName), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 10, 0), ToolTip = "Pick this clip" };
+                    Action mark = () => { if (cb.IsChecked == true) selected.Add(fi.FullName); else selected.Remove(fi.FullName); UpdateSelectBar(); row.BorderBrush = cb.IsChecked == true ? Accent.Brush : Brushes.Transparent; };
+                    cb.Click += (s, e) => mark();
+                    DockPanel.SetDock(cb, Dock.Left); dp.Children.Add(cb);
+                    row.BorderThickness = new Thickness(1); row.BorderBrush = cb.IsChecked == true ? Accent.Brush : Brushes.Transparent;
+                    row.MouseLeftButtonUp += (s, e) => { var src = e.OriginalSource as DependencyObject; if (src != null && FindParent<ButtonBase>(src) == null) { cb.IsChecked = cb.IsChecked != true; mark(); } };   // a click on the row (not a button) ticks it
+                }
                 var thumb = new Border { Width = 128, Height = 72, CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 0, 14, 0), Background = B("#2E2639") };
                 DockPanel.SetDock(thumb, Dock.Left); dp.Children.Add(thumb); Thumb(fi.FullName, thumb);
                 var btns = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
@@ -713,22 +776,22 @@ namespace HallowClips
                 star.Foreground = fav ? Accent.Brush : (Brush)FindResource("Muted");
                 star.Click += (s, e) => { S.SetFavorite(fi.FullName, !S.IsFavorite(fi.FullName)); S.Save(); FillClips(); };
                 var trim = ib("Trim", "Trim - keep only the best part (no re-encoding)"); trim.Click += (s, e) => TrimClip(fi.FullName);
-                var discord = ib("Copy for Discord", "Copy for Discord - a smaller copy under 10 MB, ready to paste"); discord.Click += (s, e) => CopyForDiscord(fi.FullName);
+                var discord = ib("Copy for Discord", discordTip); discord.Click += (s, e) => CopyForDiscord(fi.FullName, S.DiscordMB);
                 var ren = ib("Rename", "Rename"); ren.Click += (s, e) => RenameClip(fi.FullName);
-                var show = ib("Show in folder", "Show in folder");
-                show.Click += (s, e) => Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\"");
                 var del = ib("Delete", "Move to the Recycle Bin");
                 del.Click += (s, e) =>
                 {
-                    try { Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(fi.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin); S.SetFavorite(fi.FullName, false); S.Save(); Status(fi.Name + " is in the Recycle Bin."); FillClips(); }
+                    try { ClipIndex.ToRecycleBin(fi.FullName); S.SetFavorite(fi.FullName, false); S.Save(); Status(fi.Name + " is in the Recycle Bin."); FillClips(); if (showStorage) FillStorage(); }
                     catch (Exception ex) { Status("Couldn't delete it: " + ex.Message); }
                 };
                 // v1.7: title, thumbnail, GIF and phone exports
-                var more = ib("More", "Title, thumbnail, GIF, phone version, show in folder");
+                var more = ib("More", "Title, thumbnail, GIF, phone version, other Discord sizes, show in folder");
                 var cm = new ContextMenu();
                 Action<string, Action> mi = (label, act) => { var m = new MenuItem { Header = label }; m.Click += (s, e) => act(); cm.Items.Add(m); };
                 mi("Set title...", () => TitleClip(fi.FullName)); mi("Pick thumbnail...", () => PickThumb(fi.FullName));
-                mi("Export GIF...", () => GifClip(fi.FullName)); mi("Phone version (9:16)...", () => PhoneClip(fi.FullName)); mi("Show in folder", () => { try { Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\""); } catch { } });
+                mi("Export GIF...", () => GifClip(fi.FullName)); mi("Phone version (9:16)...", () => PhoneClip(fi.FullName));
+                foreach (var mb in ClipIndex.DiscordSizes.Where(x => x != ClipIndex.DiscordMB(S.DiscordMB))) { var m2 = mb; mi("Copy for Discord under " + m2 + " MB", () => CopyForDiscord(fi.FullName, m2)); }   // v1.12
+                mi("Show in folder", () => { try { Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\""); } catch { } });
                 more.ContextMenu = cm; more.Click += (s, e) => { cm.PlacementTarget = more; cm.Placement = PlacementMode.Bottom; cm.IsOpen = true; };
                 foreach (var b in new[] { play, star, trim, discord, ren, more, del }) btns.Children.Add(b);
                 if (busy.Contains(fi.FullName)) foreach (var b in new[] { trim, discord, ren, more, del }) b.IsEnabled = false;
@@ -737,12 +800,170 @@ namespace HallowClips
                 var name = Path.GetFileNameWithoutExtension(fi.Name); var game = fi.Directory.Name;
                 bool own = !System.Text.RegularExpressions.Regex.IsMatch(name, @"^" + System.Text.RegularExpressions.Regex.Escape(game) + @" \d{4}-\d\d-\d\d \d\d-\d\d-\d\d$");   // renamed by you
                 var title = TitleOf(fi);   // v1.7: your title (stored in the MP4) comes first
-                t.Children.Add(new TextBlock { Text = title ?? (own ? name : game), FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name });
+                t.Children.Add(new TextBlock { Text = title ?? (own ? name : game), FontSize = 14, FontWeight = FontWeights.SemiBold, ToolTip = fi.Name, TextTrimming = TextTrimming.CharacterEllipsis });
                 if (title != null) own = true;
                 var len = DurationOf(fi);
-                t.Children.Add(new TextBlock { Text = (own ? game + "   \u00B7   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   \u00B7   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   \u00B7   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5 });
+                t.Children.Add(new TextBlock { Text = (own ? game + "   ·   " : "") + fi.LastWriteTime.ToString("ddd d MMM, HH:mm") + "   ·   " + (len > 0 ? TrimWindow.Clock(len).Split('.')[0] + "   ·   " : "") + (fi.Length / 1048576.0).ToString("0.0") + " MB", Foreground = (Brush)FindResource("Muted"), FontSize = 11.5, TextTrimming = TextTrimming.CharacterEllipsis });
                 dp.Children.Add(t); row.Child = dp; clipsList.Children.Add(row);
             }
+            if (hits.Count > shown.Count)
+            {
+                var moreBtn = new Button { Content = "Show more (" + (hits.Count - shown.Count) + " more)", Style = (Style)FindResource("Btn"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 8) };
+                moreBtn.Click += (s, e) => { showCount += PageSize * 2; FillClips(); }; clipsList.Children.Add(moreBtn);
+            }
+        }
+        static T FindParent<T>(DependencyObject d) where T : DependencyObject
+        {
+            while (d != null && !(d is T)) d = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+            return d as T;
+        }
+        void ClearFilters()
+        {
+            filter.Query = ""; filter.Game = ""; filter.Range = "all"; filter.FavoritesOnly = false; showCount = PageSize; gameKey = null;
+            var st = statusText != null ? statusText.Text : ""; Content = Build(); UpdateState(); SessionState(); FillClips(); Status(st);
+        }
+        // the filter bar: search, game, date, favourites
+        FrameworkElement BuildFilters()
+        {
+            var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 10) }; DockPanel.SetDock(bar, Dock.Top);
+            var sg = new Grid { Width = 210, Margin = new Thickness(0, 0, 8, 0) };
+            searchBox = new TextBox { Style = (Style)FindResource("Search"), Text = filter.Query, ToolTip = "Search by title, name or game (Esc clears)" };
+            var mag = Icons.Make("magnifying-glass", 13, (Brush)FindResource("Muted")); mag.HorizontalAlignment = HorizontalAlignment.Left; mag.Margin = new Thickness(12, 0, 0, 0); mag.IsHitTestVisible = false;
+            var hint = new TextBlock { Text = "Search clips", Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(36, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Visibility = string.IsNullOrEmpty(filter.Query) ? Visibility.Visible : Visibility.Collapsed };
+            sg.Children.Add(searchBox); sg.Children.Add(mag); sg.Children.Add(hint);
+            var soon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) }; soon.Tick += (s, e) => { soon.Stop(); showCount = PageSize; FillClips(); };
+            searchBox.TextChanged += (s, e) => { filter.Query = searchBox.Text; hint.Visibility = searchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; soon.Stop(); soon.Start(); };
+            searchBox.KeyDown += (s, e) => { if (e.Key == Key.Escape) searchBox.Text = ""; };
+            DockPanel.SetDock(sg, Dock.Left); bar.Children.Add(sg);
+            gameBox = new ComboBox { Style = (Style)FindResource("Combo"), Width = 170, Margin = new Thickness(0, 0, 8, 0), ToolTip = "Only this game's clips" }; gameKey = null;
+            gameBox.SelectionChanged += (s, e) =>
+            {
+                if (fillingGames) return; var it = gameBox.SelectedItem as ComboBoxItem;
+                filter.Game = it == null ? "" : (it.Tag as string ?? ""); showCount = PageSize; FillClips(); if (showStorage) FillStorage();
+            };
+            DockPanel.SetDock(gameBox, Dock.Left); bar.Children.Add(gameBox);
+            var wp = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
+            var names = new Dictionary<string, string> { { "all", "Any time" }, { "today", "Today" }, { "week", "7 days" }, { "month", "30 days" } };
+            foreach (var r in ClipIndex.Ranges)
+            {
+                var key = r; var c = new ToggleButton { Content = names[r], Style = (Style)FindResource("Chip"), Margin = new Thickness(0, 0, 6, 0), IsChecked = (filter.Range ?? "all") == r, Padding = new Thickness(10, 5, 10, 5) };
+                c.Click += (s, e) => { filter.Range = key; foreach (var x in wp.Children.OfType<ToggleButton>()) if (x.Tag as string != "fav") x.IsChecked = x == c; showCount = PageSize; FillClips(); };
+                wp.Children.Add(c);
+            }
+            var favChip = new ToggleButton { Content = "Favourites", Tag = "fav", Style = (Style)FindResource("Chip"), IsChecked = filter.FavoritesOnly, Padding = new Thickness(10, 5, 10, 5), ToolTip = "Only your favourites" };
+            favChip.Click += (s, e) => { filter.FavoritesOnly = favChip.IsChecked == true; showCount = PageSize; FillClips(); };
+            wp.Children.Add(favChip);
+            bar.Children.Add(wp);
+            return bar;
+        }
+        string gameKey;
+        void FillGameBox(List<FileInfo> all, string root)
+        {
+            if (gameBox == null) return;
+            var gs = all.GroupBy(f => ClipIndex.GameOf(f.FullName, root), StringComparer.OrdinalIgnoreCase).Select(g => Tuple.Create(g.Key, g.Count())).OrderBy(g => g.Item1, StringComparer.OrdinalIgnoreCase).ToList();
+            if (!string.IsNullOrEmpty(filter.Game) && !gs.Any(g => string.Equals(g.Item1, filter.Game, StringComparison.OrdinalIgnoreCase))) gs.Add(Tuple.Create(filter.Game, 0));
+            var key = string.Join("|", gs.Select(g => g.Item1 + ":" + g.Item2)) + "#" + filter.Game;
+            if (key == gameKey) return; gameKey = key;
+            fillingGames = true;
+            gameBox.Items.Clear();
+            gameBox.Items.Add(new ComboBoxItem { Content = "All games (" + all.Count + ")", Tag = "" });
+            foreach (var g in gs) gameBox.Items.Add(new ComboBoxItem { Content = g.Item1 + " (" + g.Item2 + ")", Tag = g.Item1 });
+            gameBox.SelectedIndex = Math.Max(0, gs.FindIndex(g => string.Equals(g.Item1, filter.Game, StringComparison.OrdinalIgnoreCase)) + 1);
+            fillingGames = false;
+        }
+        // ---- v1.12: Select - pick several clips, then move them to the Recycle Bin together (asks first)
+        FrameworkElement BuildSelectBar()
+        {
+            var b = new Border { Background = (Brush)FindResource("PanelHi"), CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 6, 8, 6), Margin = new Thickness(0, 0, 0, 10), Visibility = selecting ? Visibility.Visible : Visibility.Collapsed };
+            var d = new DockPanel();
+            delSel = new Button { Content = "Move to Recycle Bin", Style = (Style)FindResource("Btn"), Margin = new Thickness(8, 0, 0, 0), Foreground = B("#FF8A90"), ToolTip = "Asks first; you can restore them from the Recycle Bin" };
+            delSel.Click += (s, e) => DeleteSelected();
+            var none = new Button { Content = "Clear", Style = (Style)FindResource("Btn"), Margin = new Thickness(8, 0, 0, 0), ToolTip = "Untick everything" }; none.Click += (s, e) => { selected.Clear(); FillClips(); };
+            var allShown = new Button { Content = "Select all shown", Style = (Style)FindResource("Btn"), Margin = new Thickness(8, 0, 0, 0), ToolTip = "Every clip that matches the search and filters" };
+            allShown.Click += (s, e) => { foreach (var f in ClipIndex.Apply(ClipIndex.All(S.ClipsFolder), S.ClipsFolder, filter, TitleOf, S.IsFavorite, DateTime.Now)) selected.Add(f.FullName); FillClips(); };
+            foreach (var x in new[] { delSel, none, allShown }) { DockPanel.SetDock(x, Dock.Right); d.Children.Add(x); }
+            selText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold };
+            d.Children.Add(selText); b.Child = d; return b;
+        }
+        void UpdateSelectBar()
+        {
+            if (selectBar == null || selText == null) return;
+            selectBar.Visibility = selecting ? Visibility.Visible : Visibility.Collapsed;
+            long bytes = 0; foreach (var f in selected) try { bytes += new FileInfo(f).Length; } catch { }
+            selText.Text = selected.Count == 0 ? "Tick clips (or click a row) to pick them" : selected.Count + " clip" + (selected.Count == 1 ? "" : "s") + " picked   ·   " + ClipIndex.Size(bytes);
+            delSel.IsEnabled = selected.Count > 0;
+        }
+        void DeleteSelected()
+        {
+            var files = selected.Where(File.Exists).Where(f => !busy.Contains(f)).OrderByDescending(File.GetLastWriteTime).ToList();
+            if (files.Count == 0) return;
+            var w = new ConfirmDeleteWindow(files.Select(f => new FileInfo(f)).ToList(), f => TitleOf(f) ?? Path.GetFileNameWithoutExtension(f.Name), S.IsFavorite) { Owner = this }; w.ShowDialog();
+            if (!w.Ok) return;
+            Status("Moving " + files.Count + " clip" + (files.Count == 1 ? "" : "s") + " to the Recycle Bin...");
+            new Thread(() =>
+            {
+                var r = ClipIndex.Recycle(files, ClipIndex.ToRecycleBin, ThumbPath);
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    foreach (var f in r.Done) { S.SetFavorite(f, false); selected.Remove(f); }
+                    S.Save();
+                    Status(r.Count + " clip" + (r.Count == 1 ? "" : "s") + " (" + ClipIndex.Size(r.Bytes) + ") moved to the Recycle Bin" + (r.Failed.Count > 0 ? " - " + r.Failed.Count + " couldn't be moved: " + r.Error : ".") + (r.Count > 0 ? " Restore them from the Recycle Bin if you change your mind." : ""));
+                    if (selected.Count == 0) { selecting = false; if (selectBtn != null) selectBtn.IsChecked = false; }
+                    FillClips(); if (showStorage) FillStorage();
+                }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+        // ---- v1.12: storage used per game (a bar each, biggest first; click one to see only its clips)
+        bool fillingStorage;
+        void FillStorage()
+        {
+            if (storagePanel == null || fillingStorage) return;
+            var root = S.ClipsFolder; fillingStorage = true;
+            if (storagePanel.Child == null) storagePanel.Child = new TextBlock { Text = "Adding up...", Foreground = (Brush)FindResource("Muted") };
+            Action<List<ClipIndex.Usage>, long> show = (use, free) => { fillingStorage = false; storagePanel.Child = StorageView(use, free, root); };
+            if (Snap.On) { show(ClipIndex.SizeByGame(root), ClipIndex.FreeBytes(root)); return; }
+            new Thread(() =>
+            {
+                var u = ClipIndex.SizeByGame(root); var free = ClipIndex.FreeBytes(root);
+                Dispatcher.BeginInvoke(new Action(() => show(u, free)));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+        FrameworkElement StorageView(List<ClipIndex.Usage> use, long free, string root)
+        {
+            var sp = new StackPanel();
+            long total = use.Sum(u => u.Bytes);
+            var head = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var drive = ""; try { drive = Path.GetPathRoot(Path.GetFullPath(root)).TrimEnd('\\'); } catch { }
+            var right = new TextBlock { Text = free >= 0 ? ClipIndex.Size(free) + " free on " + drive + (S.SpaceLimitGB > 0 ? "   ·   space limit " + S.SpaceLimitGB + " GB" : "") : "", Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center };
+            DockPanel.SetDock(right, Dock.Right); head.Children.Add(right);
+            head.Children.Add(new TextBlock { Text = "Clips use " + ClipIndex.Size(total), FontWeight = FontWeights.SemiBold, FontSize = 13.5 });
+            sp.Children.Add(head);
+            if (use.Count == 0) { sp.Children.Add(new TextBlock { Text = "Nothing in the clips folder yet.", Foreground = (Brush)FindResource("Muted") }); return sp; }
+            long max = Math.Max(1, use.Max(u => u.Bytes)); const int rows = 8;
+            var list = use.Take(rows).ToList();
+            if (use.Count > rows) list.Add(new ClipIndex.Usage { Game = (use.Count - rows) + " more", Bytes = use.Skip(rows).Sum(u => u.Bytes), Clips = use.Skip(rows).Sum(u => u.Clips) });
+            foreach (var u in list)
+            {
+                var g = u; bool real = use.Contains(g);
+                var row = new Grid { Margin = new Thickness(0, 2, 0, 2), Cursor = real ? Cursors.Hand : null, Background = Brushes.Transparent, ToolTip = real ? "Show only " + g.Game + "'s clips (click again for all)" : null };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+                row.ColumnDefinitions.Add(new ColumnDefinition());
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+                bool on = string.Equals(filter.Game, g.Game, StringComparison.OrdinalIgnoreCase);
+                var n = new TextBlock { Text = g.Game, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), FontWeight = on ? FontWeights.Bold : FontWeights.Normal, Foreground = on ? Accent.Brush : (Brush)FindResource("Text") };
+                var track = new Border { Height = 10, CornerRadius = new CornerRadius(5), Background = (Brush)FindResource("PanelHi"), VerticalAlignment = VerticalAlignment.Center };
+                var fill = new Border { Height = 10, CornerRadius = new CornerRadius(5), Background = real ? Accent.Brush : (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+                var bg = new Grid(); bg.Children.Add(track); bg.Children.Add(fill);
+                double frac = Math.Max(0.01, g.Bytes / (double)max);
+                bg.SizeChanged += (s, e) => fill.Width = Math.Max(4, e.NewSize.Width * frac);
+                if (Snap.On) fill.Width = Math.Max(4, 400 * frac);
+                var sz = new TextBlock { Text = ClipIndex.Size(g.Bytes) + "   ·   " + g.Clips + " clip" + (g.Clips == 1 ? "" : "s"), Foreground = (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(bg, 1); Grid.SetColumn(sz, 2);
+                row.Children.Add(n); row.Children.Add(bg); row.Children.Add(sz);
+                if (real) row.MouseLeftButtonUp += (s, e) => { filter.Game = on ? "" : g.Game; showCount = PageSize; FillClips(); storagePanel.Child = StorageView(use, free, root); };
+                sp.Children.Add(row);
+            }
+            return sp;
         }
 
         // ---- v1.3: record a whole session (start / stop) - its own recorder next to the replay buffer, straight to a file
@@ -900,13 +1121,14 @@ namespace HallowClips
             Work(clip, "Trimming " + Path.GetFileName(clip) + "...", () => { string err; var f = ClipOps.Trim(ff, clip, info.Codec, a, b, out err); return f ?? "!" + err; },
                 r => { if (r.StartsWith("!")) Status(r.Substring(1)); else { if (S.IsFavorite(clip)) { S.SetFavorite(r, true); S.Save(); } Status("Saved the trimmed copy: " + Path.GetFileName(r) + " (the original is still there)."); } });
         }
-        void CopyForDiscord(string clip)
+        void CopyForDiscord(string clip, int size)
         {
             var ff = S.Ffmpeg;
-            Work(clip, "Making a Discord copy of " + Path.GetFileName(clip) + "...", () =>
+            var lim = ClipIndex.DiscordMB(size);
+            Work(clip, "Making a Discord copy (under " + lim + " MB) of " + Path.GetFileName(clip) + "...", () =>
             {
                 var info = ClipOps.Inspect(ff, clip); string err;
-                var f = ClipOps.ForDiscord(ff, clip, info, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err);
+                var f = ClipOps.ForDiscord(ff, clip, info, lim, m => Dispatcher.BeginInvoke(new Action(() => Status(m))), out err);
                 return f ?? "!" + err;
             }, r =>
             {
@@ -914,8 +1136,8 @@ namespace HallowClips
                 try
                 {
                     Clipboard.SetFileDropList(new System.Collections.Specialized.StringCollection { r });
-                    var mb = (new FileInfo(r).Length / 1048576.0).ToString("0.0");
-                    Status("Copied for Discord (" + mb + " MB) - paste it into a Discord message with Ctrl+V.");
+                    var mb = (new FileInfo(r).Length / 1e6).ToString("0.0", System.Globalization.CultureInfo.CurrentCulture);
+                    Status("Copied for Discord (" + mb + " MB, under " + lim + " MB) - paste it into a Discord message with Ctrl+V.");
                     toast.Flash("Copied for Discord - paste with Ctrl+V");
                 }
                 catch (Exception ex) { Status("Made " + r + " but couldn't copy it: " + ex.Message); }
@@ -1146,6 +1368,17 @@ namespace HallowClips
                 Snap.Save(new PhoneWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "phone.png"), 560, 0);
                 var rw = new ReelWindow(RecentClips(40), ReelName, DurationOf); if (RecentClips(40).Count > 1) { rw.Check(0); rw.Check(1); }
                 Snap.Save(rw, System.IO.Path.Combine(dir, "reel.png"), 620, 0);
+                // v1.12: the library - storage per game, Select with two clips picked, a search, and the question before the Recycle Bin
+                var picks = RecentClips(3).Skip(1).Select(f => f.FullName).ToList();
+                showStorage = true; selecting = true; foreach (var p in picks) selected.Add(p);
+                Content = Build(); UpdateState(); FillClips();
+                Snap.Save(this, System.IO.Path.Combine(dir, "library.png"), 820, 1000);
+                showStorage = false; selecting = false; selected.Clear();
+                filter.Query = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_SNAP_QUERY") ?? "boss"; filter.Range = "week";
+                Content = Build(); UpdateState(); FillClips();
+                Snap.Save(this, System.IO.Path.Combine(dir, "library-search.png"), 820, 760);
+                filter.Query = ""; filter.Range = "all";
+                Snap.Save(new ConfirmDeleteWindow(RecentClips(12), f => TitleOf(f) ?? Path.GetFileNameWithoutExtension(f.Name), S.IsFavorite), System.IO.Path.Combine(dir, "confirm-delete.png"), 520, 0);
             }
         }
     }

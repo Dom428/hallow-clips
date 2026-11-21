@@ -27,7 +27,7 @@ namespace HallowClips
                     var eb = new StringBuilder();
                     p.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (eb) { eb.AppendLine(e.Data); if (eb.Length > 6000) eb.Remove(0, eb.Length - 6000); } };
                     p.Start(); Job.Add(p); p.BeginErrorReadLine();
-                    try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
+                    try { p.PriorityClass = Recorder.TestScreen ? ProcessPriorityClass.Idle : ProcessPriorityClass.BelowNormal; } catch { }   // tests: idle
                     var o = p.StandardOutput.ReadToEndAsync();
                     if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } err = "It took too long."; return null; }
                     p.WaitForExit(); exit = p.ExitCode; lock (eb) err = eb.ToString().Trim();
@@ -117,44 +117,59 @@ namespace HallowClips
             return file;
         }
 
-        // ---- Copy for Discord: a re-encoded copy that fits under Discord's 10 MB upload limit.
+        // ---- Copy for Discord: a re-encoded copy that fits under Discord's upload limit (v1.12: 10, 25 or 50 MB).
         // Bitrate from the length ("2-pass-ish": if the first try comes out too big, it's redone a bit smaller).
         public const long DiscordLimit = 10L * 1000 * 1000;
         public static string DiscordDir { get { return Path.Combine(ClipSettings.Dir, "discord"); } }
-        public static string ForDiscord(string ffmpeg, string clip, Info info, Action<string> progress, out string error)
+        public static string ForDiscord(string ffmpeg, string clip, Info info, Action<string> progress, out string error) { return ForDiscord(ffmpeg, clip, info, 10, progress, out error); }
+        // v1.12: the picture for a video bitrate - more room = sharper and smoother (never above the clip's own size or frame rate)
+        public static int DiscordHeight(int videoK) { return videoK >= 9000 ? 1440 : videoK >= 5000 ? 1080 : videoK >= 2000 ? 720 : videoK >= 900 ? 540 : 360; }
+        public static int DiscordFps(int videoK) { return videoK >= 4000 ? 60 : 30; }
+        public const int MaxDiscordK = 16000;   // a short clip doesn't need to fill 50 MB
+        // video kbit/s for `seconds` of clip under `mb` MB; under 200 = too long
+        public static double DiscordVideoK(double seconds, int mb, int audioK)
         {
-            error = null;
+            if (seconds <= 0) return 0;
+            double target = mb * 1000.0 * 1000 * 0.93;   // room for the MP4 container
+            return Math.Min(MaxDiscordK, target * 8 / 1000 / seconds - audioK);
+        }
+        public static int DiscordAudioK(int mb) { return mb >= 25 ? 128 : 96; }
+        public static string ForDiscord(string ffmpeg, string clip, Info info, int mb, Action<string> progress, out string error)
+        {
+            error = null; mb = ClipIndex.DiscordMB(mb); long limit = mb * 1000L * 1000;
             if (info.Duration <= 0) { error = "Couldn't read the clip's length."; return null; }
-            const int audioK = 96;
-            double target = DiscordLimit * 0.93;   // room for the MP4 container
-            double videoK = target * 8 / 1000 / info.Duration - audioK;
-            if (videoK < 200) { error = "This clip is too long for Discord's 10 MB - trim it to under " + (int)(target * 8 / 1000 / (200 + audioK)) + " s first."; return null; }
+            int audioK = DiscordAudioK(mb);
+            double target = limit * 0.93;   // room for the MP4 container
+            double videoK = DiscordVideoK(info.Duration, mb, audioK);
+            if (videoK < 200) { error = "This clip is too long for " + mb + " MB - trim it to under " + (int)(target * 8 / 1000 / (200 + audioK)) + " s first" + (mb < 50 ? ", or pick a bigger Discord size." : "."); return null; }
             Directory.CreateDirectory(DiscordDir);
             foreach (var old in Directory.GetFiles(DiscordDir, "*.mp4")) try { if (File.GetLastWriteTime(old) < DateTime.Now.AddDays(-2)) File.Delete(old); } catch { }
-            var file = Path.Combine(DiscordDir, Path.GetFileNameWithoutExtension(clip) + ".mp4");
-            var enc = Recorder.Encoder(ffmpeg);
+            var file = Path.Combine(DiscordDir, Path.GetFileNameWithoutExtension(clip) + (mb == 10 ? "" : " " + mb + "MB") + ".mp4");
+            var enc = Recorder.TestScreen ? "test" : Recorder.Encoder(ffmpeg);
             for (int attempt = 1; attempt <= 3; attempt++)
             {
                 int v = (int)videoK;
-                int h = v >= 5000 ? 1080 : v >= 2000 ? 720 : v >= 900 ? 540 : 360;
-                int fps = v >= 4000 ? 60 : 30;
-                string venc = enc == "h264_nvenc" ? "-c:v h264_nvenc -preset p5 -multipass fullres -rc cbr -b:v " + v + "k -maxrate " + v + "k -bufsize " + (v * 2) + "k"
-                    : enc == "h264_amf" ? "-c:v h264_amf -rc cbr -b:v " + v + "k -maxrate " + v + "k -bufsize " + (v * 2) + "k"
-                    : enc == "h264_qsv" ? "-c:v h264_qsv -b:v " + v + "k -maxrate " + v + "k -bufsize " + (v * 2) + "k"
+                int h = DiscordHeight(v), fps = DiscordFps(v);
+                if (info.Fps >= 1 && info.Fps < fps) fps = (int)Math.Round(info.Fps);
+                // v1.12: variable bitrate inside the limit (busy moments get more, still ones less); the size check below keeps it under
+                string venc = enc == "h264_nvenc" ? "-c:v h264_nvenc -preset p5 -multipass fullres -rc vbr -b:v " + v + "k -maxrate " + (v * 3 / 2) + "k -bufsize " + (v * 2) + "k"
+                    : enc == "h264_amf" ? "-c:v h264_amf -rc vbr_peak -b:v " + v + "k -maxrate " + (v * 3 / 2) + "k -bufsize " + (v * 2) + "k"
+                    : enc == "h264_qsv" ? "-c:v h264_qsv -b:v " + v + "k -maxrate " + (v * 3 / 2) + "k -bufsize " + (v * 2) + "k"
+                    : enc == "test" ? "-c:v mpeg4 -b:v " + v + "k"   // tests: the CPU, never the graphics card
                     : "-c:v h264_mf -b:v " + v + "k";
                 var a = new StringBuilder("-hide_banner -loglevel error -y -i \"" + clip + "\" ");
                 var mix = MixFilter(0, ExportTracks(info), "a");   // v1.9: the sound tracks you chose for exports, in one track
                 if (mix != null) a.Append("-filter_complex \"" + mix + "\" -map 0:v:0 -map \"[a]\" "); else a.Append("-map 0:v:0 ");
                 a.Append("-vf \"scale=-2:'min(" + h + ",ih)',fps=" + fps + ",format=yuv420p\" " + venc + " -c:a aac -b:a " + audioK + "k -ac 2 -movflags +faststart \"" + file + "\"");
-                if (progress != null) progress(attempt == 1 ? "Making a Discord copy (" + h + "p)..." : "A bit smaller (try " + attempt + ")...");
+                if (progress != null) progress(attempt == 1 ? "Making a Discord copy under " + mb + " MB (" + h + "p)..." : "A bit smaller (try " + attempt + ")...");
                 string err; int exit; Run(ffmpeg, a.ToString(), 600000, out err, out exit);
                 if (exit != 0 || !File.Exists(file)) { error = "The Discord copy failed: " + Family.OneLine(err); return null; }
                 long size = new FileInfo(file).Length;
-                if (size <= DiscordLimit * 0.98) return file;
+                if (size <= limit * 0.98) return file;
                 videoK = (videoK + audioK) * (target / size) * 0.95 - audioK;   // scale down by how much it overshot
                 if (videoK < 150) break;
             }
-            error = "Couldn't get it under 10 MB - trim the clip first."; return null;
+            error = "Couldn't get it under " + mb + " MB - trim the clip first."; return null;
         }
 
         // ---- rename (same folder); the thumbnail follows
