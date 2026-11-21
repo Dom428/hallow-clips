@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.13.0.0")]
-[assembly: AssemblyFileVersion("1.13.0.0")]
+[assembly: AssemblyVersion("1.14.0.0")]
+[assembly: AssemblyFileVersion("1.14.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.13";
+        public const string Version = "1.14";
         // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
         public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
@@ -46,7 +46,9 @@ namespace HallowClips
             // v1.6: crash reports (kept on this PC); exiting right after means no Windows error box, and the job ends FFmpeg
             AppDomain.CurrentDomain.UnhandledException += (s, e) => { Crash.Write(e.ExceptionObject as Exception, "app"); Environment.Exit(1); };
             System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) => { Crash.Write(e.Exception, "background task"); e.SetObserved(); };
-            Accent.Hex = Accent.Pick(ClipSettings.Load().UseHallowAccent);   // v1.6: the Hallow accent, before the theme loads
+            var startS = ClipSettings.Load();
+            Accent.Hex = Accent.Pick(startS.UseHallowAccent);   // v1.6: the Hallow accent, before the theme loads
+            HallowClips.Look.IsLight = HallowClips.Look.Resolve(startS.Look, Accent.FilePath);   // v1.14: light or dark
             int si = Array.IndexOf(args, "--snap");
             if (si >= 0 && si + 1 < args.Length)
             {
@@ -82,7 +84,7 @@ namespace HallowClips
     {
         [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
         [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
-        readonly TextBlock text = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
+        readonly TextBlock text = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Pal.B("#ECE8F4"), VerticalAlignment = VerticalAlignment.Center };
         readonly DispatcherTimer hide = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
         readonly FrameworkElement ic; readonly Border frame;
         public Toast()
@@ -90,13 +92,13 @@ namespace HallowClips
             WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; ShowInTaskbar = false; ShowActivated = false; SizeToContent = SizeToContent.WidthAndHeight; FontFamily = new FontFamily("Segoe UI");
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
             ic = Icons.Make("circle-play", 16, Accent.Brush); ic.Margin = new Thickness(0, 0, 10, 0); sp.Children.Add(ic); sp.Children.Add(text);
-            Content = frame = new Border { Background = new SolidColorBrush(Color.FromArgb(235, 0x1C, 0x17, 0x24)), BorderBrush = Accent.Brush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 10, 18, 10), Child = sp };
+            Content = frame = new Border { Background = Pal.Tint(235, "#1C1724"), BorderBrush = Accent.Brush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 10, 18, 10), Child = sp };
             hide.Tick += (s, e) => { hide.Stop(); Hide(); };
             SourceInitialized += (s, e) => { var h = new WindowInteropHelper(this).Handle; SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x20 | 0x80 | 0x08000000); };
         }
         public void Flash(string msg)
         {
-            ((System.Windows.Shapes.Path)ic).Fill = Accent.Brush; frame.BorderBrush = Accent.Brush;   // v1.6: follows the Hallow accent
+            ((System.Windows.Shapes.Path)ic).Fill = Accent.Brush; frame.BorderBrush = Accent.Brush; frame.Background = Pal.Tint(235, "#1C1724"); text.Foreground = Pal.B("#ECE8F4");   // v1.14: light / dark   // v1.6: follows the Hallow accent
             text.Text = msg;   // v1.11: the text and Show() had gone missing in 1.6, so the pop-up never appeared
             if (Program.Quiet) { try { File.AppendAllText(Path.Combine(ClipSettings.Dir, "toast.log"), DateTime.Now.ToString("HH:mm:ss") + " " + msg + Environment.NewLine); } catch { } return; }   // tests: nothing on the screen
             if (!IsVisible) Show(); UpdateLayout();
@@ -108,7 +110,7 @@ namespace HallowClips
     {
         [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
         [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
-        static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+        static SolidColorBrush B(string hex) { return Pal.B(hex); }   // v1.14: light mode swaps it
 
         readonly ClipSettings S = ClipSettings.Load();
         readonly Recorder rec;
@@ -126,7 +128,7 @@ namespace HallowClips
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             try { Icon = AppIcon(); } catch { }
             Content = Build();
-            SourceInitialized += (s, e) => { int dark = 1; DwmSetWindowAttribute(new WindowInteropHelper(this).Handle, 20, ref dark, 4); };
+            Look.Track(this);   // v1.14: the title bar follows light / dark
             Closing += (s, e) =>
             {
                 if (!exiting && S.TrayOnClose && !Snap.On)
@@ -213,6 +215,7 @@ namespace HallowClips
             accentSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) }; accentSoon.Tick += (s, e) => { accentSoon.Stop(); ApplyAccent(); };
             accentRetry = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) }; accentRetry.Tick += (s, e) => StartAccentWatch(); accentRetry.Start();
             StartAccentWatch();
+            HallowClips.Look.WatchSystem(Dispatcher, ApplyAccent);   // v1.14: "Same as Windows" follows Windows live
         }
         void StartAccentWatch()
         {
@@ -232,8 +235,10 @@ namespace HallowClips
         {
             try
             {
-                var hex = Accent.Pick(S.UseHallowAccent); if (hex == Accent.Hex) return;
-                Accent.Hex = hex; Program.LoadTheme(Application.Current);
+                var hex = Accent.Pick(S.UseHallowAccent); var light = HallowClips.Look.Resolve(S.Look, Accent.FilePath);
+                if (hex == Accent.Hex && light == HallowClips.Look.IsLight) return;   // v1.14: a change of light / dark alone re-themes too
+                Accent.Hex = hex; HallowClips.Look.IsLight = light; Program.LoadTheme(Application.Current);
+                Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); HallowClips.Look.TitleBars();
                 var st = statusText != null ? statusText.Text : ""; Content = Build(); UpdateState(); FillClips(); SessionState(); Status(st);
             }
             catch { }
@@ -260,7 +265,7 @@ namespace HallowClips
         string Command(string line)
         {
             var sp = line.IndexOf(' '); var cmd = (sp < 0 ? line : line.Substring(0, sp)).ToLowerInvariant();
-            if (cmd == "ping") return "ok " + Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version } });
+            if (cmd == "ping") return "ok " + Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "look", HallowClips.Look.IsLight ? "light" : "dark" } });   // v1.14: look = what the windows use now
             if (cmd == "status")
             {
                 string json = null; var op = Dispatcher.BeginInvoke(new Action(() => json = StatusJson()));
@@ -627,6 +632,11 @@ namespace HallowClips
             hi.Click += (s, e) => { S.UseHallowIcon = hi.IsChecked == true; S.Save(); CheckTrayHost(); }; set.Children.Add(hi);
             var ha = new CheckBox { Content = new TextBlock { Text = "Use the Hallow accent (the colour you pick in Hallow Toolkit)", TextWrapping = TextWrapping.Wrap }, IsChecked = S.UseHallowAccent, Style = (Style)FindResource("Switch") };
             ha.Click += (s, e) => { S.UseHallowAccent = ha.IsChecked == true; S.Save(); Dispatcher.BeginInvoke(new Action(ApplyAccent)); }; set.Children.Add(ha);
+            // v1.14: light / dark - Follow Hallow uses the choice in Hallow Toolkit (Light, Dark or Same as Windows)
+            var lookRow = chipRow("Look", new[] { Tuple.Create("follow", "Follow Hallow"), Tuple.Create("light", "Light"), Tuple.Create("dark", "Dark") },
+                () => HallowClips.Look.Normalize(S.Look), v => { S.Look = v; Dispatcher.BeginInvoke(new Action(ApplyAccent)); }, false);
+            ((FrameworkElement)lookRow).ToolTip = "Follow Hallow uses the look picked in Hallow Toolkit (Light, Dark or Same as Windows). Light or Dark here is just for Hallow Clips.";
+            set.Children.Add(lookRow);
             // v1.8: hotkeys and updates
             var keys = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
             var upd = new Button { Content = "Check for updates", Style = (Style)FindResource("Btn") }; upd.Click += (s, e) => CheckForUpdate(true);
@@ -952,7 +962,7 @@ namespace HallowClips
                 bool on = string.Equals(filter.Game, g.Game, StringComparison.OrdinalIgnoreCase);
                 var n = new TextBlock { Text = g.Game, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), FontWeight = on ? FontWeights.Bold : FontWeights.Normal, Foreground = on ? Accent.Brush : (Brush)FindResource("Text") };
                 var track = new Border { Height = 10, CornerRadius = new CornerRadius(5), Background = (Brush)FindResource("PanelHi"), VerticalAlignment = VerticalAlignment.Center };
-                var fill = new Border { Height = 10, CornerRadius = new CornerRadius(5), Background = real ? Accent.Brush : (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+                var fill = new Border { Height = 10, CornerRadius = new CornerRadius(5), Background = real ? Accent.FillBrush : (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
                 var bg = new Grid(); bg.Children.Add(track); bg.Children.Add(fill);
                 double frac = Math.Max(0.01, g.Bytes / (double)max);
                 bg.SizeChanged += (s, e) => fill.Width = Math.Max(4, e.NewSize.Width * frac);

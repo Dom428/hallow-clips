@@ -20,7 +20,7 @@
                         <Ellipse x:Name="k" Width="18" Height="18" Fill="#ECE8F4" Stroke="#16121C" StrokeThickness="3"/>
                     </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="k" Property="Fill" Value="#FFFFFF"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="k" Property="Fill" Value="#FFFFFD"/></Trigger>
                         <Trigger Property="IsDragging" Value="True"><Setter TargetName="k" Property="Width" Value="20"/><Setter TargetName="k" Property="Height" Value="20"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -111,7 +111,7 @@
                 <ControlTemplate TargetType="ButtonBase">
                     <Grid>
                         <Border x:Name="b" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8"/>
-                        <Border x:Name="hl" Background="#FFFFFF" Opacity="0" CornerRadius="8"/>
+                        <Border x:Name="hl" Background="#FFFFFE" Opacity="0" CornerRadius="8"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}">
                             <Path x:Name="ic" Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource IconConv}}"
                                   Visibility="{Binding Content, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource IconVis}}"
@@ -231,7 +231,7 @@
     <!-- Search box -->
     <Style x:Key="Search" TargetType="TextBox">
         <Setter Property="Foreground" Value="#ECE8F4"/>
-        <Setter Property="CaretBrush" Value="#F07820"/>
+        <Setter Property="CaretBrush" Value="#F07821"/>
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="Template">
             <Setter.Value>
@@ -240,7 +240,7 @@
                         <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#F07820"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#F07821"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -249,7 +249,7 @@
     <!-- Plain text field -->
     <Style x:Key="Field" TargetType="TextBox">
         <Setter Property="Foreground" Value="#ECE8F4"/>
-        <Setter Property="CaretBrush" Value="#F07820"/>
+        <Setter Property="CaretBrush" Value="#F07821"/>
         <Setter Property="FontSize" Value="12.5"/>
         <Setter Property="Template">
             <Setter.Value>
@@ -258,14 +258,14 @@
                         <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#F07820"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="#F07821"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
-    <!-- Dark right-click menus -->
+    <!-- Right-click menus (dark, or light in light mode) -->
     <Style TargetType="ContextMenu">
         <Setter Property="Foreground" Value="#ECE8F4"/>
         <Setter Property="Template">

@@ -16,12 +16,12 @@ namespace HallowClips
 {
     public abstract class Dialog : Window
     {
-        protected static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+        protected static SolidColorBrush B(string hex) { return Pal.B(hex); }   // v1.14: light mode swaps it
         protected Dialog(string title, double width)
         {
             Title = title; Width = width; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text");
-            FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5; WindowStartupLocation = WindowStartupLocation.CenterOwner; Look.Track(this);
         }
         protected StackPanel Foot(string okText, Action ok)
         {
@@ -43,7 +43,7 @@ namespace HallowClips
         readonly Border startPic = Pic(), endPic = Pic();
         readonly TextBlock startText = new TextBlock(), endText = new TextBlock(), lenText = new TextBlock();
         readonly Slider startS, endS;
-        static Border Pic() { return new Border { Width = 248, Height = 140, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x26, 0x39)) }; }
+        static Border Pic() { return new Border { Width = 248, Height = 140, CornerRadius = new CornerRadius(8), Background = Pal.B("#2E2639") }; }
         public static string Clock(double s) { if (s < 0) s = 0; return ((int)s / 60) + ":" + (s % 60).ToString("00.0", CultureInfo.InvariantCulture); }
 
         public TrimWindow(string clip, string ffmpeg, ClipOps.Info info) : base("Trim clip", 580)

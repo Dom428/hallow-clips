@@ -18,6 +18,7 @@
 | **1.11** | Steps aside for Discord Clips (discord_clips.exe running and its GPU video encoder busy): pauses the replay buffer and resumes by itself; setting pause / keep both, Record anyway this session (menu, `anyway`), `pausedFor` in status |
 | **1.12** | Clip library: search (title, name, game), filters for game, date and favourites, Show more; Select several clips and move them to the Recycle Bin after an in-app question; storage per game with free space; Copy for Discord under 10 / 25 / 50 MB; pipe `storage` and `find` |
 | **1.13** | Editor: picture strip on the timeline, frame-exact trim (re-encoded) next to the lossless keyframe trim, cut out a middle part, slow motion (0.5x / 0.25x) or 2x for a part, blur a box (names, chat) - one re-encode on the graphics card, the original stays |
+| **1.14** | Light and dark mode: follows Hallow Toolkit's Light / Dark / Same as Windows (theme.json `mode`, live), Settings > Look (Follow Hallow / Light / Dark) for Clips alone; title bar, menus, tooltips and every window; accent text darkened for contrast; pipe `ping` reports `look` |
 
 ## Next
 ### Gaps vs ShadowPlay / Medal
@@ -39,5 +40,6 @@ What NVIDIA ShadowPlay (NVIDIA app), Medal.tv, Outplayed and OBS's replay buffer
 - Automatic clips from game events / AI highlights (Outplayed, Medal, ShadowPlay Highlights) - **not buildable here**: only a few games (CS2, Dota 2) expose events and none played here do (see Later). Reading game memory or hooking the game is out (anti-cheat); a loudness-spike guess was looked at again in 1.12 and left out - gunfire, explosions and music are loud whether or not anything worth keeping happened
 - Live streaming (OBS, ShadowPlay) - **not planned**: a different kind of app
 - In-game overlay with performance stats (ShadowPlay Alt+Z) - **covered** by Hallow Overlay
+- Light mode (NVIDIA app, Medal and Outplayed follow Windows) - **buildable**: the Hallow family switch in Hallow Toolkit, or Look in Settings (1.14)
 ## Later
 - Auto clips from game events - only a few games (CS2, Dota 2) expose them, and none of the games played here do

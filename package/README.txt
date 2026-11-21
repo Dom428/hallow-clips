@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.14
+- Light and dark mode: Clips follows the look picked in Hallow Toolkit (Light, Dark or Same as Windows).
+- Settings > Look: Follow Hallow, Light or Dark just for Clips. Every window, menu and the title bar follow.
+
 WHAT'S NEW IN 1.13
 - The trim window is now an editor: a picture strip along the timeline, frame-exact cuts, cut out a part in the middle,
   slow motion (or 2x) for a part, and blur a box over names or chat. The original clip always stays.

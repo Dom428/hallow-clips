@@ -51,9 +51,55 @@ namespace HallowClips
                 return "#" + up(c.R).ToString("X2") + up(c.G).ToString("X2") + up(c.B).ToString("X2");
             }
         }
-        public static SolidColorBrush Brush { get { var b = new SolidColorBrush(Color); b.Freeze(); return b; } }
-        // Theme.xaml with the accent swapped in
-        public static string Themed(string xaml) { return xaml.Replace(Own, Hex).Replace(OwnLight, LightHex); }
+        // v1.14: the accent for text and thin lines - darkened in light mode so it stays readable (4.5:1)
+        public static string TextHex { get { return Look.IsLight ? Look.TextAccent(Hex) : Hex; } }
+        public static SolidColorBrush Brush { get { var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(TextHex)); b.Freeze(); return b; } }
+        // the real accent, for filled areas (bars, buttons)
+        public static SolidColorBrush FillBrush { get { var b = new SolidColorBrush(Color); b.Freeze(); return b; } }
+        // Theme.xaml with the accent swapped in, and in light mode the light palette (v1.14). Tokens in Theme.xaml:
+        // #F07821 = accent as a thin line / caret, #FFFFFE = the hover overlay (white on dark, black on light), #FFFFFD = slider knob hover.
+        public static string Themed(string xaml)
+        {
+            var light = Look.IsLight;
+            xaml = xaml.Replace(Own, Hex).Replace(OwnLight, LightHex).Replace("#F07821", TextHex)
+                .Replace("#FFFFFE", light ? "#000000" : "#FFFFFF").Replace("#FFFFFD", light ? Look.LLilac : "#FFFFFF");
+            return light ? Look.Swap(xaml, Pal.Map) : xaml;
+        }
+    }
+
+    // ---- v1.14: light mode - every dark colour Clips uses, and its light twin (spec palette). Theme.xaml and code both go through this.
+    public static class Pal
+    {
+        public static readonly Dictionary<string, string> Map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "#16121C", Look.LBg },      // Bg
+            { "#1A1522", Look.LPanel },   // text field
+            { "#1C1724", Look.LPanel },   // "clip saved" pop-up
+            { "#211B2A", Look.LPanel },   // Panel
+            { "#241E2E", Look.LPanel },   // menus, tooltips, drop-downs
+            { "#2A2333", Look.LPanel2 },  // buttons
+            { "#2E2639", Look.LPanel2 },  // PanelHi, picture placeholders
+            { "#3A3248", Look.LBorder },  // Line, hover
+            { "#55496A", "#B4A8CC" },     // button hover border
+            { "#58566A", "#A39CB2" },     // switch off
+            { "#5A5268", "#A39CB2" },     // idle dot
+            { "#CDCAD6", "#FFFFFF" },     // switch knob
+            { "#6ED28C", Look.LGreen },   // switch on
+            { "#ECE8F4", Look.LText },    // Text
+            { "#8F88A0", Look.LMuted },   // Muted
+            { "#A98BE0", Look.LLilac },   // lilac headings
+            { "#C8414B", "#F6D5D8" },     // pressed toggle (light red, dark text)
+            { "#E05A64", Look.LRed },
+            { "#E0424C", Look.LRed },     // recording dot, cut-out part
+            { "#FF6B73", Look.LRed },     // stop session
+            { "#FF8A90", Look.LRed },     // Recycle Bin
+            { "#E0A030", Look.LAmber },   // paused dot
+            { "#FFB060", Look.LAmber },   // favourites warning
+            { "#4C9AFF", "#2F74D8" },     // slow-motion part on the editor strip
+        };
+        public static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(Look.Pick(hex, Map))); }
+        public static Color C(string hex) { return (Color)ColorConverter.ConvertFromString(Look.Pick(hex, Map)); }
+        public static SolidColorBrush Tint(byte alpha, string hex) { var c = C(hex); return new SolidColorBrush(Color.FromArgb(alpha, c.R, c.G, c.B)); }
     }
 
     // ---- crash reports: <data folder>\crashes\<time>.txt, newest 20 kept. Never settings, keys or file contents - only what broke.

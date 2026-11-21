@@ -23,7 +23,7 @@ namespace HallowClips
         readonly ClipOps.Info info; readonly double dur, frame;
         const double PW = 548, PH = 308, TW = 548, TH = 54;
         readonly Border pic; readonly Canvas over = new Canvas { Width = PW, Height = PH, Background = Brushes.Transparent, ClipToBounds = true };
-        readonly Border strip = new Border { Width = TW, Height = TH, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x26, 0x39)) };
+        readonly Border strip = new Border { Width = TW, Height = TH, CornerRadius = new CornerRadius(6), Background = Pal.B("#2E2639") };
         readonly Canvas marks = new Canvas { Width = TW, Height = TH, IsHitTestVisible = false, ClipToBounds = true };
         readonly Rectangle blurBox = new Rectangle { Stroke = Brushes.White, StrokeThickness = 2, StrokeDashArray = new DoubleCollection { 3, 2 }, Fill = new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)), Visibility = Visibility.Collapsed, IsHitTestVisible = false };
         readonly TextBlock startText = new TextBlock(), endText = new TextBlock(), sum = new TextBlock(), at = new TextBlock();
@@ -208,17 +208,17 @@ namespace HallowClips
             marks.Children.Clear();
             Func<double, double> X = t => Math.Max(0, Math.Min(TW, t / dur * TW));
             Action<double, double, Brush, double, double> box = (a, b, br, top, h) => { if (b <= a) return; var r = new Rectangle { Width = Math.Max(1, X(b) - X(a)), Height = h, Fill = br }; Canvas.SetLeft(r, X(a)); Canvas.SetTop(r, top); marks.Children.Add(r); };
-            var shade = new SolidColorBrush(Color.FromArgb(215, 0x16, 0x12, 0x1C));
+            var shade = Pal.Tint(215, "#16121C");
             box(0, Plan.Start, shade, 0, TH); box(Plan.End, dur, shade, 0, TH);
             if (cut && Plan.HasCut)   // taken out: darkened, with a red band
             {
                 double a = Math.Max(Plan.CutFrom, Plan.Start), b = Math.Min(Plan.CutTo, Plan.End);
-                box(a, b, shade, 0, TH); box(a, b, new SolidColorBrush(Color.FromRgb(0xE0, 0x42, 0x4C)), TH / 2 - 3, 6);
+                box(a, b, shade, 0, TH); box(a, b, Pal.B("#E0424C"), TH / 2 - 3, 6);
             }
             if (slow && Plan.HasSpeed)   // slow motion: a blue band along the top
             {
                 double a = Math.Max(Plan.SlowFrom, Plan.Start), b = Math.Min(Plan.SlowTo, Plan.End);
-                box(a, b, new SolidColorBrush(Color.FromArgb(70, 0x4C, 0x9A, 0xFF)), 0, TH); box(a, b, new SolidColorBrush(Color.FromRgb(0x4C, 0x9A, 0xFF)), 0, 7);
+                box(a, b, Pal.Tint(70, "#4C9AFF"), 0, TH); box(a, b, Pal.B("#4C9AFF"), 0, 7);
             }
             foreach (var t in new[] { Plan.Start, Plan.End })
             {

@@ -13,6 +13,7 @@ namespace HallowClips
     {
         // Newest first. One or two short lines per version.
         public static readonly Tuple<string, string[]>[] Notes = {
+            Tuple.Create("1.14", new[] { "Light and dark mode: Clips follows the look picked in Hallow Toolkit (Light, Dark or Same as Windows), right away", "Settings > Look: Follow Hallow, Light or Dark just for Clips. The title bar, menus, tooltips and every window follow too" }),
             Tuple.Create("1.13", new[] { "The scissors open an editor: a picture strip along the timeline, frame steps, and Exact cuts at any frame next to the lossless Fast trim", "Cut out a boring part in the middle, play a part in slow motion (0.5x, 0.25x) or at 2x, and blur a box over names or chat - drag it on the picture. The original always stays" }),
             Tuple.Create("1.12", new[] { "Find clips fast: search by title, name or game, and filter by game, date (today, 7 or 30 days) and favourites - Show more reaches older clips", "Select: tick several clips and move them to the Recycle Bin together (asks first). Storage shows how much space each game's clips use", "Copy for Discord under 10, 25 or 50 MB (Settings, or the ... menu): more room gives a sharper, smoother copy" }),
             Tuple.Create("1.11", new[] { "Steps aside for Discord Clips: while Discord's own Clips records the same game, Hallow Clips pauses (one recorder on the graphics card, not two) and starts again by itself when it stops", "Settings > When Discord Clips is also recording: pause Hallow Clips, or keep both; Record anyway this session is in the menu" }),
@@ -40,12 +41,12 @@ namespace HallowClips
 
     public class WhatsNewWindow : Window
     {
-        static SolidColorBrush B(string hex) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+        static SolidColorBrush B(string hex) { return Pal.B(hex); }   // v1.14: light mode swaps it
         public WhatsNewWindow(List<Tuple<string, string[]>> items)
         {
             Title = "What's new in Hallow Clips"; Width = 560; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text");
-            FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5; WindowStartupLocation = WindowStartupLocation.CenterOwner; Look.Track(this);
             var sp = new StackPanel { Margin = new Thickness(26, 20, 26, 20) };
             sp.Children.Add(new TextBlock { Text = "What's new in Hallow Clips " + Program.Version, FontSize = 20, FontWeight = FontWeights.Bold, Foreground = Accent.Brush, Margin = new Thickness(0, 0, 0, 12) });
             foreach (var v in items)

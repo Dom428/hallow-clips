@@ -44,7 +44,7 @@ namespace HallowClips
                 }));
             }) { IsBackground = true }.Start();
         }
-        protected Border Pic(double w, double h) { return new Border { Width = w, Height = h, CornerRadius = new CornerRadius(8), Background = new SolidColorBrush(Color.FromRgb(0x2E, 0x26, 0x39)) }; }
+        protected Border Pic(double w, double h) { return new Border { Width = w, Height = h, CornerRadius = new CornerRadius(8), Background = Pal.B("#2E2639") }; }
         protected FrameworkElement Chips(string label, IEnumerable<Tuple<string, string>> opts, string selected, Action<string> pick)
         {
             var row = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
