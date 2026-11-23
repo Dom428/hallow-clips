@@ -7,6 +7,10 @@ HOW TO INSTALL
 4. The first time, click "Set up FFmpeg" - it downloads the free FFmpeg recorder (about 171 MB) from GitHub
    and checks it before use.
 
+WHAT'S NEW IN 1.16
+- Auto highlights (Settings, off unless you pick it): teach Clips your game's kill sound from one of your clips (... > Teach the kill sound). While you play it listens for it in the game's sound - never inside the game - and adds a marker or saves a clip by itself. Loud moments is there too.
+- Keep clips: clips older than 30 days, 90 days or a year go to the Recycle Bin by themselves (favourites stay).
+
 WHAT'S NEW IN 1.15
 - Light mode readability fixes: slider knobs are white with an accent ring, filled buttons keep readable text with any accent (e.g. violet), warnings use a darker amber.
 - Windows that are already open, like the clip editor, switch between light and dark right away too.

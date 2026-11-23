@@ -43,13 +43,18 @@ namespace HallowClips
         [DataMember] public bool RamBuffer = false;       // v1.10: keep the replay buffer in memory
         [DataMember] public string DiscordClips = "pause"; // v1.11: when Discord Clips also records: pause (Clips steps aside) or both
         [DataMember] public int DiscordMB = 10;           // v1.12: Copy for Discord size: 10, 25 or 50 MB
+        [DataMember] public string Highlights = "off";    // v1.16: auto highlights from the game's sound: off, kill, loud, both
+        [DataMember] public string HighlightsWas = "";    // v1.16: what "on" means again (menu toggle)
+        [DataMember] public string HighlightAction = "marker"; // v1.16: marker or save (a clip by itself)
+        [DataMember] public string HighlightSens = "normal";   // v1.16: fewer, normal, more
+        [DataMember] public int KeepDays = 0;             // v1.16: older clips (not favourites) go to the Recycle Bin; 0 = keep
         [DataMember] public bool UseHallowAccent = true; // v1.6: the Hallow accent colour from theme.json
         [DataMember] public string Look = "follow";     // v1.14: follow (Hallow Toolkit's light / dark), light or dark
         [DataMember] public string LastCrashShown = "";  // v1.6: the crash report already told about
         [DataMember] public bool UseHallowIcon = true;   // v1.5: hide our tray icon while Hallow Hub hosts the family icon
         [DataMember] public string CodecsFor = "";       // v1.3: which FFmpeg + graphics card the list below was found for
         [DataMember] public List<string> Codecs = new List<string>();   // v1.3: hevc / av1 when this PC can record them
-        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; Look = "follow"; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; Webcam = ""; WebcamCorner = "br"; WebcamSize = "medium"; RamBuffer = false; DiscordClips = "pause"; DiscordMB = 10; CodecsFor = ""; Codecs = new List<string>(); }
+        [OnDeserializing] void D(StreamingContext c) { On = true; OnlyInGame = true; Seconds = 30; Fps = 60; Quality = "high"; Mic = true; Screen = 0; Folder = ""; TrayOnClose = true; FfmpegPath = ""; LastSeenVersion = ""; Favorites = new List<string>(); Codec = "h264"; SpaceLimitGB = 0; UseHallowIcon = true; UseHallowAccent = true; Look = "follow"; LastCrashShown = ""; LastUpdateCheck = ""; PerAppSound = true; GameTrack = true; AppTracks = new List<string> { "Discord" }; ExportSound = "all"; Webcam = ""; WebcamCorner = "br"; WebcamSize = "medium"; RamBuffer = false; DiscordClips = "pause"; DiscordMB = 10; Highlights = "off"; HighlightsWas = ""; HighlightAction = "marker"; HighlightSens = "normal"; KeepDays = 0; CodecsFor = ""; Codecs = new List<string>(); }
         public static string Dir { get { var t = Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_DATA"); return !string.IsNullOrEmpty(t) ? t : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HallowClips"); } }   // tests use their own folder
         static string FilePath { get { return Path.Combine(Dir, "clips.json"); } }
         public static bool Frozen;
@@ -113,6 +118,11 @@ namespace HallowClips
         // made into an MP4 when it stops). null = the replay buffer.
         public string SessionFile;
         public string Codec = "h264"; string segExt = "ts";   // what the current recording uses
+        // v1.16: auto highlights listen to the game's own track (or everything when there isn't one): (bytes, count, bits, channels, rate)
+        public Action<byte[], int, int, int, int> Tap; public string HeardFrom;
+        // tests: HALLOWCLIPS_TEST_AUDIO = a 16-bit WAV used as the game's sound instead of any real device (with the test picture)
+        public static string TestAudio { get { var t = TestScreen ? Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_AUDIO") : null; return !string.IsNullOrEmpty(t) && File.Exists(t) ? t : null; } }
+        Thread testFeed; volatile bool testFeedStop;
 
         // v1.3: the video formats this PC can record: h264 always, hevc / av1 when FFmpeg and the graphics card can encode them
         // (found with a one-frame test encode with the same settings a recording uses)
@@ -163,11 +173,12 @@ namespace HallowClips
                 foreach (var f in Directory.GetFiles(BufferDir, "seg*.*")) try { File.Delete(f); } catch { }
             }
             else Directory.CreateDirectory(Path.GetDirectoryName(SessionFile));
-            sys = new AudioPipe(true); if (!sys.Open()) { Error = "Game sound: " + sys.Error; sys = null; }
-            mic = null; if (S.Mic) { mic = new AudioPipe(false); if (!mic.Open()) mic = null; }
+            var testAudio = TestAudio;
+            sys = null; if (testAudio == null) { sys = new AudioPipe(true); if (!sys.Open()) { Error = "Game sound: " + sys.Error; sys = null; } }
+            mic = null; if (S.Mic && testAudio == null) { mic = new AudioPipe(false); if (!mic.Open()) mic = null; }
             // v1.9: the game and the apps you picked on their own tracks (Windows 10 2004+; otherwise just everything + mic)
             apps = new List<AudioPipe>();
-            if (S.PerAppSound && ProcessAudio.Supported)
+            if (S.PerAppSound && ProcessAudio.Supported && testAudio == null)
             {
                 var want = new List<Tuple<int, string>>();
                 if (GamePid > 0 && S.GameTrack) want.Add(Tuple.Create(GamePid, "Game"));
@@ -177,6 +188,10 @@ namespace HallowClips
                 }
                 foreach (var w in want) { var p = new AudioPipe(w.Item1, w.Item2); if (p.Open()) apps.Add(p); }
             }
+            // v1.16: the sound auto highlights listen to - the game's own track, otherwise everything
+            HeardFrom = null; var heard = apps.FirstOrDefault(p => p.Title == "Game") ?? sys;
+            if (heard != null) { var hp = heard; HeardFrom = hp == sys ? "Game and chat" : "Game"; hp.Tap = (b, n) => { var t = Tap; if (t != null) t(b, n, hp.Bits, hp.Channels, hp.Rate); }; }
+            if (testAudio != null) HeardFrom = "Game";
             int seg = 2, wrap = S.Seconds / seg + 6;
             var fam = GpuFamily(exe);
             var q = S.Quality == "max" ? 18 : S.Quality == "medium" ? 28 : 23;
@@ -186,7 +201,7 @@ namespace HallowClips
             if (TestScreen) { cam = null; WebcamUsed = false; v = "-c:v mpeg2video -q:v 8"; }   // tests: a small generated picture on the CPU, not the screen or the graphics card
             var a = new StringBuilder();
             a.Append("-hide_banner -loglevel info -nostats -y ");   // info: "Press [q]" tells us when recording really starts
-            if (TestScreen) a.Append("-f lavfi -i testsrc2=s=320x180:r=10 ");
+            if (TestScreen) a.Append("-re -f lavfi -i testsrc2=s=320x180:r=10 ");   // -re: in real time, like the screen
             else a.AppendFormat(CultureInfo.InvariantCulture, "-f lavfi -i ddagrab=output_idx={0}:framerate={1}:draw_mouse=1 ", S.Screen, S.Fps);
             int idx = 1; var maps = cam != null ? "-map \"[vout]\" " : "-map 0:v ";
             foreach (var p in Pipes)
@@ -194,6 +209,7 @@ namespace HallowClips
                 a.AppendFormat(CultureInfo.InvariantCulture, "-f {3} -ar {0} -ac {1} -i \\\\.\\pipe\\{2} ", p.Rate, p.Channels, p.PipeName, p.Format);
                 maps += "-map " + idx + ":a "; idx++;
             }
+            if (testAudio != null) { a.Append("-re -stream_loop -1 -i \"" + testAudio + "\" "); maps += "-map " + idx + ":a "; idx++; }
             if (cam != null)
             {
                 a.Append(WebcamInput(cam) + " ");
@@ -207,6 +223,7 @@ namespace HallowClips
             a.AppendFormat(CultureInfo.InvariantCulture, "-g {0} -force_key_frames \"expr:gte(t,n_forced*{1})\" ", S.Fps * seg, seg);
             if (idx > 1) a.Append("-c:a aac -b:a 160k -ac 2 -ar 48000 ");
             trackTitles = Pipes.Select(p => p == sys ? "Game and chat" : p == mic ? "Your mic" : p.Title).ToList();
+            if (testAudio != null) trackTitles.Add("Game");
             a.Append(TitleArgs(trackTitles));   // exports pick tracks by these names
             if (SessionFile != null) a.Append("-f matroska \"" + Path.ChangeExtension(SessionFile, ".mkv") + "\"");
             else
@@ -233,6 +250,7 @@ namespace HallowClips
                 try { ff.PriorityClass = TestScreen ? ProcessPriorityClass.Idle : ProcessPriorityClass.BelowNormal; } catch { }
                 foreach (var p in all) p.Start();
                 Started = DateTime.Now;
+                if (testAudio != null) { testFeedStop = false; var wav = testAudio; testFeed = new Thread(() => FeedTest(wav)) { IsBackground = true, Name = "clips test sound" }; testFeed.Start(); }
                 logTimer = new Timer(_ => WriteLog(), null, 30000, 60000);   // also while recording, in case the app is closed hard
                 return true;
             }
@@ -247,10 +265,35 @@ namespace HallowClips
                 ff = null;
             }
             if (logTimer != null) { logTimer.Dispose(); logTimer = null; }
+            testFeedStop = true; testFeed = null;
             WriteLog();
             if (sys != null) { sys.Stop(); sys = null; } if (mic != null) { mic.Stop(); mic = null; }
             foreach (var p in apps) p.Stop(); apps = new List<AudioPipe>();
             if (ram != null) { lastRam = ram; ram.Stop(); ram = null; }   // its pieces stay readable until the next start
+        }
+
+        // tests: the WAV goes to Tap in real time (looped), as the game's sound would - never through the speakers
+        void FeedTest(string wav)
+        {
+            try
+            {
+                var b = File.ReadAllBytes(wav); int ch = BitConverter.ToInt16(b, 22), rate = BitConverter.ToInt32(b, 24), bits = BitConverter.ToInt16(b, 34);
+                int pos = 12, data = -1, len = 0; while (pos + 8 <= b.Length) { var id = System.Text.Encoding.ASCII.GetString(b, pos, 4); int sz = BitConverter.ToInt32(b, pos + 4); if (id == "data") { data = pos + 8; len = Math.Min(sz, b.Length - data); break; } pos += 8 + sz; }
+                if (data < 0 || bits != 16) return;
+                int fb = 2 * ch; var clock = Stopwatch.StartNew(); long sent = 0; var chunk = new byte[fb * rate / 10];
+                while (!testFeedStop)
+                {
+                    long due = (long)(clock.Elapsed.TotalSeconds * rate);
+                    while (sent < due && !testFeedStop)
+                    {
+                        int n = (int)Math.Min(due - sent, chunk.Length / fb);
+                        for (int i = 0; i < n; i++) { long at = ((sent + i) * fb) % len; Buffer.BlockCopy(b, data + (int)at, chunk, i * fb, fb); }
+                        var t = Tap; if (t != null) t(chunk, n * fb, 16, ch, rate); sent += n;
+                    }
+                    Thread.Sleep(10);
+                }
+            }
+            catch { }
         }
 
         // v1.1: recorder.log next to the settings - how the last recording went (sound kept in step, FFmpeg's warnings)
@@ -274,7 +317,9 @@ namespace HallowClips
         // joins the pieces covering the last `seconds` into one MP4 (no re-encoding, so it takes a moment and no GPU)
         public string Save(int seconds, string name, out string error) { return Save(seconds, name, null, out error); }
         // v1.8: marks = times you pressed the marker hotkey; those inside the clip become chapters
-        public string Save(int seconds, string name, List<DateTime> marks, out string error)
+        public string Save(int seconds, string name, List<DateTime> marks, out string error) { return Save(seconds, name, marks, null, null, out error); }
+        // v1.16: kinds = what each automatic marker was (chapter titles); title = the MP4 title (e.g. "Kill sound" for an automatic clip)
+        public string Save(int seconds, string name, List<DateTime> marks, Dictionary<DateTime, string> kinds, string title, out string error)
         {
             error = null;
             var since = DateTime.Now.AddSeconds(-seconds - 1);
@@ -293,8 +338,8 @@ namespace HallowClips
                 var list = new StringBuilder();
                 for (int i = 0; i < segs.Count; i++) { var c = Path.Combine(tmp, i.ToString("000") + "." + segExt); try { if (segs[i].Item2 != null) File.WriteAllBytes(c, segs[i].Item2); else File.Copy(segs[i].Item1, c, true); list.AppendLine("file '" + c.Replace("\\", "/") + "'"); } catch { } }
                 var lf = Path.Combine(tmp, "list.txt"); File.WriteAllText(lf, list.ToString());
-                var meta = Chapters(tmp, marks, clipStart, (DateTime.Now - clipStart).TotalSeconds);
-                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + TitleArgs(trackTitles) + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")   // MPEG-TS pieces can't carry track names: added here
+                var meta = Chapters(tmp, marks, clipStart, (DateTime.Now - clipStart).TotalSeconds, kinds);
+                var p = Process.Start(new ProcessStartInfo(S.Ffmpeg, "-hide_banner -loglevel error -y -f concat -safe 0 -i \"" + lf + "\" " + (meta != null ? "-f ffmetadata -i \"" + meta + "\" -map_chapters 1 " : "") + "-map 0 -c copy " + TitleArgs(trackTitles) + (string.IsNullOrEmpty(title) ? "" : "-metadata title=\"" + title.Replace("\"", "") + "\" ") + (Codec == "hevc" ? "-tag:v hvc1 " : "") + "-movflags +faststart \"" + file + "\"")   // MPEG-TS pieces can't carry track names: added here
                     { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true });
                 var err = p.StandardError.ReadToEnd(); p.WaitForExit(30000);
                 if (!File.Exists(file) || new FileInfo(file).Length == 0) { error = "Saving failed: " + err.Trim(); return null; }
@@ -305,16 +350,19 @@ namespace HallowClips
         // v1.3: a finished session recording (.mkv) becomes an MP4 next to it (no re-encoding). Also used for one left over
         // from a crash or a hard close. Returns the MP4, or null (the .mkv then stays, it plays too).
         // v1.8: chapters for markers (an FFmpeg metadata file), or null when none fall inside
-        public static string Chapters(string dir, List<DateTime> marks, DateTime start, double length)
+        public static string Chapters(string dir, List<DateTime> marks, DateTime start, double length) { return Chapters(dir, marks, start, length, null); }
+        public static string Chapters(string dir, List<DateTime> marks, DateTime start, double length, Dictionary<DateTime, string> kinds)
         {
             if (marks == null) return null;
-            var t = marks.Select(m => (m - start).TotalSeconds).Where(s => s > 0.5 && s < length).OrderBy(s => s).ToList();
+            var t = marks.Where(m => (m - start).TotalSeconds > 0.5 && (m - start).TotalSeconds < length).OrderBy(m => m).ToList();
             if (t.Count == 0) return null;
-            var sb = new StringBuilder(";FFMETADATA1\n"); var at = new List<double> { 0 }; at.AddRange(t);
+            var sb = new StringBuilder(";FFMETADATA1\n"); var at = new List<double> { 0 }; at.AddRange(t.Select(m => (m - start).TotalSeconds));
+            int n = 0;
             for (int i = 0; i < at.Count; i++)
             {
-                var end = i + 1 < at.Count ? at[i + 1] : length;
-                sb.Append("[CHAPTER]\nTIMEBASE=1/1000\nSTART=" + (long)(at[i] * 1000) + "\nEND=" + (long)(end * 1000) + "\ntitle=" + (i == 0 ? "Start" : "Marker " + i) + "\n");
+                var end = i + 1 < at.Count ? at[i + 1] : length; string kind = null;
+                if (i > 0 && kinds != null) kinds.TryGetValue(t[i - 1], out kind);
+                sb.Append("[CHAPTER]\nTIMEBASE=1/1000\nSTART=" + (long)(at[i] * 1000) + "\nEND=" + (long)(end * 1000) + "\ntitle=" + (i == 0 ? "Start" : kind != null ? Highlights.KindTitle(kind) : "Marker " + (++n)) + "\n");
             }
             var f = Path.Combine(dir, "chapters-" + Guid.NewGuid().ToString("N") + ".txt"); File.WriteAllText(f, sb.ToString()); return f;
         }

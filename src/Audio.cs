@@ -166,6 +166,8 @@ namespace HallowClips
         // v1.1: set when FFmpeg starts recording. Until then only silence is sent (FFmpeg reads a little while it starts up);
         // from then on the audio clock counts from the same moment as the picture.
         public volatile bool Live;
+        // v1.16: auto highlights get a copy of the real sound (never the silence filled in); bytes in this pipe's own format
+        public Action<byte[], int> Tap;
         // what happened, for recorder.log: frames from Windows, silence added, frames dropped, glitches Windows reported
         public long FramesIn, FramesPadded, FramesDropped, Glitches; public int StartupMs;   // StartupMs: FFmpeg opened the pipe this long before it started recording
 
@@ -225,7 +227,7 @@ namespace HallowClips
                         FramesIn += frames;
                         long due = (long)(clock.Elapsed.TotalSeconds * Rate);
                         if (wasLive && written + frames > due + ahead) FramesDropped += frames;   // running ahead of the clock
-                        else if (wasLive) { Enqueue(buf, bytes); written += frames; }
+                        else if (wasLive) { Enqueue(buf, bytes); written += frames; var tap = Tap; if (tap != null && (flags & 0x2) == 0) try { tap(buf, bytes); } catch { } }
                         capture.GetNextPacketSize(out next);
                     }
                     long now = (long)(clock.Elapsed.TotalSeconds * Rate);

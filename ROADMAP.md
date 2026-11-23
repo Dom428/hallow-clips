@@ -20,6 +20,7 @@
 | **1.13** | Editor: picture strip on the timeline, frame-exact trim (re-encoded) next to the lossless keyframe trim, cut out a middle part, slow motion (0.5x / 0.25x) or 2x for a part, blur a box (names, chat) - one re-encode on the graphics card, the original stays |
 | **1.14** | Light and dark mode: follows Hallow Toolkit's Light / Dark / Same as Windows (theme.json `mode`, live), Settings > Look (Follow Hallow / Light / Dark) for Clips alone; title bar, menus, tooltips and every window; accent text darkened for contrast; pipe `ping` reports `look` |
 | **1.15** | Light mode readability fixes: white slider knobs with an accent ring and an accent track, the Hallow family accent fill / text rule (same as Toolkit 5.16), text amber for warnings, open windows re-theme live; dark unchanged |
+| **1.16** | Auto highlights from the game's own sound (never the game itself): a kill sound taught once from a clip (Teach the kill sound: strip, click, Listen, where else it's heard), Loud moments as a guess; a marker (named chapter) or a clip saved by itself (close hits share one, at most 20 an hour), Sensitivity. Keep clips 30 / 90 / 365 days to the Recycle Bin (never favourites). status.json lastSave / replaySaved / highlights, pipe mark and highlights, Auto highlights in the Hallow icon menu |
 
 ## Next
 ### Gaps vs ShadowPlay / Medal
@@ -38,9 +39,11 @@ What NVIDIA ShadowPlay (NVIDIA app), Medal.tv, Outplayed and OBS's replay buffer
 - HDR capture with tone mapping (ShadowPlay, OBS) - **not now**: needs an HDR screen to test; there isn't one here
 - Hosted share links, cloud library, social feed (Medal, Outplayed) - **not buildable**: needs a server, accounts and storage
 - Upload to YouTube / TikTok (Medal, ShadowPlay) - **not buildable here**: needs a registered app with OAuth secrets; Clips makes the files (Discord copy, phone version) and Hallow Toolkit posts to Discord
-- Automatic clips from game events / AI highlights (Outplayed, Medal, ShadowPlay Highlights) - **not buildable here**: only a few games (CS2, Dota 2) expose events and none played here do (see Later). Reading game memory or hooking the game is out (anti-cheat); a loudness-spike guess was looked at again in 1.12 and left out - gunfire, explosions and music are loud whether or not anything worth keeping happened
+- Automatic clips from game events / AI highlights (Outplayed, Medal, ShadowPlay Highlights) - **partly buildable** (1.16): game events need the game to expose them (only CS2, Dota 2) and reading memory or hooking the game is out (anti-cheat), but the game's own **sound** is fair game - a **kill sound you teach once** from a clip is found in the game's sound (band-energy correlation, volume-independent; tested with it under gunfire), with *Loud moments* as an optional guess (left out in 1.12 as the only signal: gunfire and music are loud too). Off by default; a marker or a clip by itself
+- Old clips cleaned up by age (NVIDIA app gallery, Medal storage settings) - **buildable**: Keep clips 30 / 90 / 365 days, to the Recycle Bin, never favourites (1.16)
 - Live streaming (OBS, ShadowPlay) - **not planned**: a different kind of app
 - In-game overlay with performance stats (ShadowPlay Alt+Z) - **covered** by Hallow Overlay
 - Light mode (NVIDIA app, Medal and Outplayed follow Windows) - **buildable**: the Hallow family switch in Hallow Toolkit, or Look in Settings (1.14); readability fixes (1.15)
 ## Later
+- Favourites copied to a NAS / Jellyfin folder by themselves - behind a setting, private (home network) addresses only, Windows' own SMB credentials, never a permanent delete: the same rules as Hallow Torrents' NAS copy
 - Auto clips from game events - only a few games (CS2, Dota 2) expose them, and none of the games played here do

@@ -138,5 +138,22 @@ namespace HallowClips
         // ---- v1.12: Copy for Discord in three sizes (10 MB = free Discord; 25 / 50 MB for bigger upload limits)
         public static readonly int[] DiscordSizes = { 10, 25, 50 };
         public static int DiscordMB(int mb) { return DiscordSizes.Contains(mb) ? mb : 10; }
+
+        // ---- v1.16: the clean-up - what goes to the Recycle Bin: clips older than keepDays (0 = any age), then the oldest while the
+        // folder is over limitBytes (0 = no limit). Never a favourite or anything keep() says (the recording), or anything from the
+        // last 2 minutes. files = (path, bytes, last written), oldest are taken first.
+        public static readonly int[] KeepDayChoices = { 0, 30, 90, 365 };
+        public static List<string> Cleanup(IEnumerable<Tuple<string, long, DateTime>> files, long limitBytes, int keepDays, Func<string, bool> keep, DateTime now)
+        {
+            var list = files.OrderBy(f => f.Item3).ToList(); long total = list.Sum(f => f.Item2); var r = new List<string>();
+            foreach (var f in list)
+            {
+                bool old = keepDays > 0 && f.Item3 < now.AddDays(-keepDays), over = limitBytes > 0 && total > limitBytes;
+                if (!old && !over) continue;
+                if (keep(f.Item1) || f.Item3 > now.AddMinutes(-2)) continue;
+                r.Add(f.Item1); total -= f.Item2;
+            }
+            return r;
+        }
     }
 }

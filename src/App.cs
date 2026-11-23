@@ -28,14 +28,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Clips")]
 [assembly: AssemblyProduct("Hallow Clips")]
 [assembly: AssemblyDescription("Instant replay: save the last moments of your game")]
-[assembly: AssemblyVersion("1.15.0.0")]
-[assembly: AssemblyFileVersion("1.15.0.0")]
+[assembly: AssemblyVersion("1.16.0.0")]
+[assembly: AssemblyFileVersion("1.16.0.0")]
 
 namespace HallowClips
 {
     public static class Program
     {
-        public const string Version = "1.15";
+        public const string Version = "1.16";
         // tests: no pop-ups, no tray icon, no balloons, no update check (they go to logs in the test data folder)
         public static bool Quiet { get { return Environment.GetEnvironmentVariable("HALLOWCLIPS_TEST_QUIET") == "1"; } }
         [STAThread]
@@ -123,6 +123,7 @@ namespace HallowClips
         public MainWindow(bool hidden)
         {
             startHidden = hidden; rec = new Recorder(S); ClipOps.ExportChoice = S.ExportSound ?? "all";
+            rec.Tap = (b, n, bits, ch, rate) => { var h = hl; if (h != null) h.Feed(b, n, bits, ch, rate); };   // v1.16: auto highlights
             Title = "Hallow Clips"; Width = 820; Height = 820; MinWidth = 700; MinHeight = 560;
             Background = (Brush)FindResource("Bg"); Foreground = (Brush)FindResource("Text"); FontFamily = new FontFamily("Segoe UI"); FontSize = 12.5;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -148,7 +149,7 @@ namespace HallowClips
             markKeyOk = RegisterHotKey(hwnd, 4, 0x4003, 0x42);      // v1.8: Ctrl+Alt+B marks this moment
             HwndSource.FromHwnd(hwnd).AddHook((IntPtr h, int msg, IntPtr wp, IntPtr lp, ref bool handled) =>
             {
-                if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null); handled = true; }
+                if (msg == 0x0312 && wp.ToInt32() == 1) { SaveClip(null, "hotkey", null); handled = true; }
                 if (msg == 0x0312 && wp.ToInt32() == 2) { ToggleSession(); handled = true; }
                 if (msg == 0x0312 && wp.ToInt32() == 3) { Screenshot(); handled = true; }
                 if (msg == 0x0312 && wp.ToInt32() == 4) { Mark(); handled = true; }
@@ -165,6 +166,7 @@ namespace HallowClips
             DateTime lastCheck; if (!Program.Quiet && (!DateTime.TryParse(S.LastUpdateCheck, out lastCheck) || (DateTime.Now - lastCheck).TotalHours > 20)) CheckForUpdate(false);
             FindCodecs(); FinishLeftoverSessions(); FindWebcams();
             Dispatcher.BeginInvoke(new Action(EnforceLimit), DispatcherPriority.ApplicationIdle);
+            var tidy = new DispatcherTimer { Interval = TimeSpan.FromHours(1) }; tidy.Tick += (s, e) => EnforceLimit(); tidy.Start();   // v1.16: Keep clips (age) is checked every hour
             Family.Serve("Clips", Command);
             var host = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) }; host.Tick += (s, e) => CheckTrayHost(); host.Start(); CheckTrayHost();
             // What's new: an update from 1.0 (which didn't remember versions) counts as seen 1.0 when FFmpeg was already set up
@@ -283,10 +285,28 @@ namespace HallowClips
             if (cmd == "save")
             {
                 string file = null, err = null; var done = new ManualResetEvent(false);
-                var op = Dispatcher.BeginInvoke(new Action(() => SaveClip((f, e) => { file = f; err = e; done.Set(); })));
+                var op = Dispatcher.BeginInvoke(new Action(() => SaveClip((f, e) => { file = f; err = e; done.Set(); }, "family", null)));
                 if (op.Wait(TimeSpan.FromSeconds(5)) != DispatcherOperationStatus.Completed) return "error busy";
                 if (!done.WaitOne(35000)) return "error Saving is taking too long";
                 return file != null ? "ok " + Family.Json(new Dictionary<string, object> { { "file", file } }) : "error " + Family.OneLine(err ?? "Couldn't save the clip");
+            }
+            // v1.16: a marker now (Remote), and auto highlights: "highlights" (state) or "highlights off|kill|loud|both|on"
+            if (cmd == "mark")
+            {
+                string err = null;
+                if (!OnUi(() => { if (!rec.Running && session == null) err = PausedFor != null ? PausedMsg : "Not recording right now"; else Mark(); })) return "error busy";
+                return err == null ? "ok" : "error " + err;
+            }
+            if (cmd == "highlights")
+            {
+                var arg = sp < 0 ? "" : line.Substring(sp + 1).Trim().ToLowerInvariant(); object info = null; string err = null;
+                if (!OnUi(() =>
+                {
+                    if (arg == "on") { if (HlMode == "off") ToggleHighlights(); }
+                    else if (arg.Length > 0) { if (!Highlights.Modes.Contains(arg)) { err = "use off, kill, loud, both or on"; return; } SetHighlights(arg); }
+                    info = HighlightsInfo();
+                })) return "error busy";
+                return err != null ? "error " + err : "ok " + Family.Json(info);
             }
             // v1.5: Hallow Hub's one tray icon - open, our menu items, run one, quit
             if (cmd == "open") return OnUi(() => ShowFromTray()) ? "ok" : "error busy";
@@ -326,13 +346,14 @@ namespace HallowClips
             var save = it("save", "Save clip", null); if (!rec.Running) save["enabled"] = false;
             var record = it("record", "Record session", session != null); if (finishing || S.Ffmpeg == null) record["enabled"] = false;
             var mark = it("mark", "Add marker", null); if (!rec.Running && session == null) mark["enabled"] = false;
-            var list = new List<object> { save, record, it("screenshot", "Take screenshot", null), mark, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("folder", "Open clips folder", null) };
+            var list = new List<object> { save, record, it("screenshot", "Take screenshot", null), mark, new Dictionary<string, object> { { "id", "-" } }, it("replay", "Replay buffer", S.On), it("highlights", "Auto highlights", HlMode != "off"), it("folder", "Open clips folder", null) };
             if (DiscordChoice) list.Insert(5, it("anyway", "Record anyway this session", recordAnyway));   // v1.11: only while Discord Clips records this game
             return list;
         }
         string Invoke(string id)
         {
-            if (id == "save") { SaveClip(null); return null; }
+            if (id == "save") { SaveClip(null, "menu", null); return null; }
+            if (id == "highlights") { ToggleHighlights(); return null; }
             if (id == "record") { ToggleSession(); return null; }
             if (id == "replay") { S.On = !S.On; S.Save(); if (replaySwitch != null) replaySwitch.IsChecked = S.On; Restart(); return null; }
             if (id == "screenshot") { Screenshot(); return null; }
@@ -407,14 +428,14 @@ namespace HallowClips
             }
             var cur = Current; var cg = cur == null ? null : cur.Game.Parent ?? cur.Game;
             return Family.Json(new Dictionary<string, object> { { "app", "Clips" }, { "version", Program.Version }, { "updated", Family.Time(DateTime.Now) },
-                { "recording", rec.Running }, { "pausedFor", PausedFor }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "lastCrash", Crash.Last().HasValue ? Family.Time(Crash.Last().Value) : null }, { "clips", clips } });
+                { "recording", rec.Running }, { "pausedFor", PausedFor }, { "game", cg != null ? cg.Name : null }, { "installDir", cg != null ? cg.InstallDir : null }, { "seconds", S.Seconds }, { "folder", S.ClipsFolder }, { "trayHosted", hostedByHub }, { "lastCrash", Crash.Last().HasValue ? Family.Time(Crash.Last().Value) : null }, { "lastSave", lastSave }, { "replaySaved", lastSave != null ? lastSave["time"] : null }, { "highlights", HighlightsInfo() }, { "clips", clips } });
         }
         string lastStatusKey;
         // writes status.json when something changed (force: the clip list changed)
         void WriteStatus(bool force)
         {
             if (Snap.On) return;
-            var key = rec.Running + "|" + PausedFor + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder + "|" + hostedByHub;
+            var key = rec.Running + "|" + PausedFor + "|" + (Current != null ? GameName : "") + "|" + S.Seconds + "|" + S.ClipsFolder + "|" + hostedByHub + "|" + HlMode + "|" + (hl != null);
             if (!force && key == lastStatusKey) return;
             lastStatusKey = key;
             if (statusSoon == null) { statusSoon = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) }; statusSoon.Tick += (s, e) => { statusSoon.Stop(); var json = StatusJson(); new Thread(() => Family.WriteStatus(json)) { IsBackground = true }.Start(); }; }
@@ -452,13 +473,16 @@ namespace HallowClips
                 else if (lastPausedFor != null && want) Status("Discord Clips stopped - Hallow Clips is recording again.");
                 lastPausedFor = paused;
             }
+            SyncHighlights();   // v1.16
             UpdateState(); WriteStatus(false);
         }
 
         // done (optional) gets the saved file, or null and why not
         readonly List<Action<string, string>> waiting = new List<Action<string, string>>();
-        void SaveClip(Action<string, string> done)
+        // v1.16: how = hotkey, app, menu, family (another Hallow app / --cmd) or auto (a highlight); title = the MP4 title (automatic clips)
+        void SaveClip(Action<string, string> done, string how, string title)
         {
+            bool auto = how == "auto";
             if (saving) { if (done != null) waiting.Add(done); return; }   // already saving: that clip is the answer
             if (!rec.Running && PausedFor != null)
             {
@@ -468,18 +492,26 @@ namespace HallowClips
             }
             if (!rec.Running) { toast.Flash(S.Ffmpeg == null ? "Hallow Clips isn't set up yet" : "Not recording right now"); if (done != null) done(null, "Nothing recorded yet"); return; }
             saving = true; if (done != null) waiting.Add(done); var name = GameName; var secs = S.Seconds;
-            toast.Flash("Saving the last " + secs + " seconds...");
+            if (!auto) toast.Flash("Saving the last " + secs + " seconds...");   // an automatic clip only says so when it's saved
+            var mk = marks.ToList(); var kinds = new Dictionary<DateTime, string>(markKinds);
             new Thread(() =>
             {
-                var mk = marks.ToList(); string err; var f = rec.Save(secs, name, mk, out err);
+                string err; var f = rec.Save(secs, name, mk, kinds, title, out err);
                 // Hallow Overlay shows "Clip saved" on its panel when it runs; otherwise our own pop-up does
-                bool overlay = false;
-                if (f != null && !Program.Quiet) { var r = Family.Send("Overlay", "flash Clip saved", 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
+                bool overlay = false; var said = auto ? "Highlight saved" : "Clip saved";
+                if (f != null && !Program.Quiet) { var r = Family.Send("Overlay", "flash " + said, 3000); overlay = r != null && (r == "ok" || r.StartsWith("ok ")); }
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     saving = false;
-                    if (f != null) { if (overlay) toast.Hide(); else toast.Flash("Clip saved - " + name + ", " + secs + " s"); Status("Saved " + Path.GetFileName(f)); FillClips(); }
-                    else { toast.Flash("Couldn't save the clip"); Status(err); }
+                    if (f != null)
+                    {
+                        if (overlay) toast.Hide(); else toast.Flash(said + " - " + (auto && title != null ? title + ", " : name + ", ") + secs + " s");
+                        Status((auto ? "Auto highlight (" + title + ") saved " : "Saved ") + Path.GetFileName(f));
+                        // v1.16: status.json lastSave - Hallow Overlay / Hub / Remote can say "Replay saved" (seq goes up with every save)
+                        lastSave = new Dictionary<string, object> { { "seq", ++saveSeq }, { "file", f }, { "time", Family.Time(DateTime.Now) }, { "seconds", secs }, { "game", name }, { "how", how ?? "app" }, { "auto", auto }, { "title", title } };
+                        FillClips(); WriteStatus(true); EnforceLimit();
+                    }
+                    else { if (!auto) toast.Flash("Couldn't save the clip"); Status(err); }
                     var w = waiting.ToList(); waiting.Clear(); foreach (var d in w) try { d(f, err); } catch { }
                 }));
             }) { IsBackground = true }.Start();
@@ -499,7 +531,7 @@ namespace HallowClips
             title.Children.Add(new TextBlock { Text = " CLIPS", FontSize = 22, FontWeight = FontWeights.Light, VerticalAlignment = VerticalAlignment.Center });
             DockPanel.SetDock(title, Dock.Left); head.Children.Add(title);
             var saveNow = new Button { Content = "Save a clip now", Style = (Style)FindResource("Accent"), ToolTip = "Same as Ctrl+Alt+S" };
-            saveNow.Click += (s, e) => SaveClip(null);
+            saveNow.Click += (s, e) => SaveClip(null, "app", null);
             sessionBtn = new Button { Content = "Record session", Style = (Style)FindResource("Btn"), Margin = new Thickness(0, 0, 8, 0), ToolTip = "Record everything from now until you stop (Ctrl+Alt+R)" };
             sessionBtn.Click += (s, e) => ToggleSession();
             var hb = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -570,6 +602,11 @@ namespace HallowClips
                 () => S.SpaceLimitGB.ToString(), v => { S.SpaceLimitGB = int.Parse(v); Dispatcher.BeginInvoke(new Action(EnforceLimit)); }, false);
             ((FrameworkElement)limit).ToolTip = "When the clips folder grows past this, the oldest clips that aren't favourites go to the Recycle Bin.";
             set.Children.Add(limit);
+            // v1.16: clean-up by age (Recycle Bin, never favourites)
+            var keepRow = chipRow("Keep clips", ClipIndex.KeepDayChoices.Select(d => Tuple.Create(d.ToString(), d == 0 ? "Forever" : d == 365 ? "1 year" : d + " days")),
+                () => (ClipIndex.KeepDayChoices.Contains(S.KeepDays) ? S.KeepDays : 0).ToString(), v => { S.KeepDays = int.Parse(v); Dispatcher.BeginInvoke(new Action(EnforceLimit)); }, false);
+            ((FrameworkElement)keepRow).ToolTip = "Clips and sessions older than this go to the Recycle Bin by themselves (checked at start, after each save and every hour). Favourites always stay.";
+            set.Children.Add(keepRow);
             // v1.9: separate sound per app, and which tracks go into exports
             var apps = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var al = new TextBlock { Text = "Own sound tracks", Width = 120, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeights.SemiBold }; DockPanel.SetDock(al, Dock.Left); apps.Children.Add(al);
@@ -625,6 +662,39 @@ namespace HallowClips
                 () => S.DiscordClips == "both" ? "both" : "pause", v => { S.DiscordClips = v; Dispatcher.BeginInvoke(new Action(() => { CheckDiscord(); Decide(); })); }, false);
             ((FrameworkElement)dcRow).ToolTip = "Discord's own Clips records the same game on the graphics card, so two recorders would double the load. Paused, Hallow Clips starts again by itself a few seconds after Discord Clips stops; Record anyway (menu or above) keeps both for this game.";
             set.Children.Add(dcRow);
+            // v1.16: auto highlights from the game's own sound (never the game itself)
+            hlRow = new ContentControl(); set.Children.Add(hlRow);
+            FillHlRow = () =>
+            {
+                var hs = new StackPanel(); var mode = HlMode;
+                var r1 = chipRow("Auto highlights", new[] { Tuple.Create("off", "Off"), Tuple.Create("kill", "Kill sound"), Tuple.Create("loud", "Loud moments"), Tuple.Create("both", "Both") }, () => HlMode,
+                    v => Dispatcher.BeginInvoke(new Action(() => SetHighlights(v))), false);
+                ((FrameworkElement)r1).ToolTip = "Hallow Clips listens to the game's sound while it records (the game's own track when Own sound tracks > Game is on, otherwise everything you hear) - it never looks inside the game. Kill sound: the sound you teach it from a clip. Loud moments: a sudden jump in loudness (a guess - gunfire and music are loud too).";
+                hs.Children.Add(r1);
+                if (mode != "off")
+                {
+                    var r2 = chipRow("On a highlight", new[] { Tuple.Create("marker", "Add a marker"), Tuple.Create("save", "Save a clip") }, () => S.HighlightAction == "save" ? "save" : "marker", v => S.HighlightAction = v, false);
+                    ((FrameworkElement)r2).ToolTip = "Add a marker: a chapter in your next clip (like Ctrl+Alt+B). Save a clip: a clip a few seconds after it, by itself (highlights close together share one clip; at most " + MaxAutoPerHour + " an hour).";
+                    hs.Children.Add(r2);
+                    hs.Children.Add(chipRow("Sensitivity", new[] { Tuple.Create("fewer", "Fewer hits"), Tuple.Create("normal", "Normal"), Tuple.Create("more", "More hits") }, () => S.HighlightSens ?? "normal", v => { S.HighlightSens = v; Dispatcher.BeginInvoke(new Action(SyncHighlights)); }, false));
+                    if (Highlights.Kill(mode))
+                    {
+                        var ks = TaughtSound(); var kr = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+                        var kl = new TextBlock { Text = "Kill sound", Width = 120, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) }; DockPanel.SetDock(kl, Dock.Left); kr.Children.Add(kl);
+                        if (ks != null)
+                        {
+                            var forget = new Button { Content = "Forget", Style = (Style)FindResource("Btn"), Padding = new Thickness(10, 3, 10, 3), ToolTip = "Forget the kill sound (teach a new one from any clip)" };
+                            forget.Click += (s, e) => { KillSound.Forget(); ksStamp = DateTime.MinValue.AddTicks(1); SetHighlights(HlMode == "both" ? "loud" : "off"); Status("Kill sound forgotten."); };
+                            DockPanel.SetDock(forget, Dock.Right); kr.Children.Add(forget);
+                        }
+                        kr.Children.Add(new TextBlock { Text = ks != null ? "Taught from " + ks.From + " (" + ks.Length.ToString("0.00", System.Globalization.CultureInfo.CurrentCulture) + " s at " + TrimWindow.Clock(ks.At) + ")" : "Not taught yet - on a clip where you got a kill, open ... > Teach the kill sound and pick the moment it plays.",
+                            Foreground = ks != null ? (Brush)FindResource("Muted") : B("#FFB060"), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center });
+                        hs.Children.Add(kr);
+                    }
+                }
+                hlRow.Content = hs;
+            };
+            FillHlRow();
             Func<string, bool, Action<bool>, CheckBox> sw = (text, on, setv) =>
             {
                 var c = new CheckBox { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, IsChecked = on, Style = (Style)FindResource("Switch") };
@@ -810,6 +880,7 @@ namespace HallowClips
                 mi("Set title...", () => TitleClip(fi.FullName)); mi("Pick thumbnail...", () => PickThumb(fi.FullName));
                 mi("Export GIF...", () => GifClip(fi.FullName)); mi("Phone version (9:16)...", () => PhoneClip(fi.FullName));
                 foreach (var mb in ClipIndex.DiscordSizes.Where(x => x != ClipIndex.DiscordMB(S.DiscordMB))) { var m2 = mb; mi("Copy for Discord under " + m2 + " MB", () => CopyForDiscord(fi.FullName, m2)); }   // v1.12
+                mi("Teach the kill sound...", () => TeachKill(fi.FullName));   // v1.16
                 mi("Show in folder", () => { try { Process.Start("explorer.exe", "/select,\"" + fi.FullName + "\""); } catch { } });
                 more.ContextMenu = cm; more.Click += (s, e) => { cm.PlacementTarget = more; cm.Placement = PlacementMode.Bottom; cm.IsOpen = true; };
                 foreach (var b in new[] { play, star, trim, discord, ren, more, del }) btns.Children.Add(b);
@@ -1072,8 +1143,8 @@ namespace HallowClips
         bool enforcing;
         void EnforceLimit()
         {
-            if (S.SpaceLimitGB <= 0 || enforcing || Snap.On) return;
-            enforcing = true; long limit = S.SpaceLimitGB * 1000L * 1000 * 1000; var folder = S.ClipsFolder;
+            if ((S.SpaceLimitGB <= 0 && S.KeepDays <= 0) || enforcing || Snap.On) return;
+            enforcing = true; long limit = Math.Max(0, S.SpaceLimitGB) * 1000L * 1000 * 1000; var folder = S.ClipsFolder; int days = Math.Max(0, S.KeepDays);
             var keep = new HashSet<string>(S.Favorites ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
             var recording = session != null ? Path.ChangeExtension(session.SessionFile, ".mkv") : null;
             new Thread(() =>
@@ -1084,16 +1155,16 @@ namespace HallowClips
                     if (Directory.Exists(folder))
                     {
                         var files = new DirectoryInfo(folder).GetFiles("*.*", SearchOption.AllDirectories).Where(f => f.Extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase) || f.Extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)).ToList();
-                        long total = files.Sum(f => f.Length);
-                        foreach (var f in files.OrderBy(f => f.LastWriteTime))
+                        var sizes = files.ToDictionary(f => f.FullName, f => f.Length, StringComparer.OrdinalIgnoreCase);
+                        // v1.16: by age (Keep clips) and by size (Space limit); favourites, the recording and brand-new files stay
+                        var go = ClipIndex.Cleanup(files.Select(f => Tuple.Create(f.FullName, f.Length, f.LastWriteTime)), limit, days, p => keep.Contains(p) || string.Equals(p, recording, StringComparison.OrdinalIgnoreCase), DateTime.Now);
+                        foreach (var path in go)
                         {
-                            if (total <= limit) break;
-                            if (keep.Contains(f.FullName) || string.Equals(f.FullName, recording, StringComparison.OrdinalIgnoreCase) || f.LastWriteTime > DateTime.Now.AddMinutes(-2)) continue;   // favourites, the recording, brand-new files
                             try
                             {
-                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(f.FullName, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                                total -= f.Length; freed += f.Length; n++;
-                                try { File.Delete(ThumbPath(f.FullName)); } catch { }
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(path, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                                freed += sizes[path]; n++;
+                                try { File.Delete(ThumbPath(path)); } catch { }
                             }
                             catch (Exception ex) { err = ex.Message; }
                         }
@@ -1103,8 +1174,8 @@ namespace HallowClips
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     enforcing = false;
-                    if (n > 0) { Status("Space limit " + S.SpaceLimitGB + " GB: moved " + n + " old clip" + (n == 1 ? "" : "s") + " (" + (freed / 1e9).ToString("0.0") + " GB) to the Recycle Bin."); FillClips(); }
-                    else if (err != null) Status("Space limit: " + err);
+                    if (n > 0) { Status((days > 0 && limit > 0 ? "Keep clips " + days + " days, space limit " + S.SpaceLimitGB + " GB" : days > 0 ? "Keep clips " + days + " days" : "Space limit " + S.SpaceLimitGB + " GB") + ": moved " + n + " old clip" + (n == 1 ? "" : "s") + " (" + (freed / 1e9).ToString("0.0") + " GB) to the Recycle Bin."); FillClips(); }
+                    else if (err != null) Status("Clean-up: " + err);
                 }));
             }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
         }
@@ -1253,6 +1324,111 @@ namespace HallowClips
             Announce("Marker added");
         }
 
+        // ---- v1.16: auto highlights - the game's sound only (the track that goes into the clip), never the game itself
+        LiveHighlights hl; string hlKey; int heardCount; readonly List<Tuple<DateTime, string>> recentHits = new List<Tuple<DateTime, string>>();
+        readonly Dictionary<DateTime, string> markKinds = new Dictionary<DateTime, string>();
+        Dictionary<string, object> lastSave; int saveSeq;
+        string HlMode { get { return Highlights.Mode(S.Highlights); } }
+        KillSound ksCache; DateTime ksStamp = DateTime.MinValue;
+        KillSound TaughtSound()
+        {
+            DateTime t; try { t = File.Exists(KillSound.FilePath) ? File.GetLastWriteTimeUtc(KillSound.FilePath) : DateTime.MinValue; } catch { t = DateTime.MinValue; }
+            if (t != ksStamp) { ksStamp = t; ksCache = t == DateTime.MinValue ? null : KillSound.Load(); }
+            return ksCache;
+        }
+        // listening while the replay records and something is switched on (a kill sound needs teaching first)
+        void SyncHighlights()
+        {
+            if (Snap.On) return;
+            var mode = HlMode; var ks = Highlights.Kill(mode) ? TaughtSound() : null; bool loud = Highlights.Loud(mode);
+            bool want = rec.Running && (ks != null || loud);
+            var key = want ? mode + "|" + S.HighlightSens + "|" + (ks != null ? ks.Made + "|" + ks.Frames : "") : null;
+            if (key == hlKey) return;
+            if (hl != null) { hl.Stop(); hl = null; }
+            hlKey = key;
+            if (want) hl = new LiveHighlights(ks, loud, S.HighlightSens, (when, kind) => Dispatcher.BeginInvoke(new Action(() => OnHighlight(when, kind))));
+        }
+        void SetHighlights(string mode)
+        {
+            S.Highlights = Highlights.Mode(mode); if (S.Highlights != "off") S.HighlightsWas = S.Highlights; S.Save();
+            SyncHighlights(); if (FillHlRow != null) FillHlRow(); WriteStatus(true);
+        }
+        void ToggleHighlights()
+        {
+            if (HlMode != "off") { S.HighlightsWas = HlMode; SetHighlights("off"); return; }
+            var was = Highlights.Mode(S.HighlightsWas);
+            SetHighlights(was != "off" ? was : TaughtSound() != null ? "kill" : "loud");
+        }
+        Dictionary<string, object> HighlightsInfo()
+        {
+            var ks = TaughtSound(); var h = hl;
+            return new Dictionary<string, object> { { "mode", HlMode }, { "action", S.HighlightAction == "save" ? "save" : "marker" }, { "sensitivity", S.HighlightSens ?? "normal" },
+                { "killSound", ks == null ? null : new Dictionary<string, object> { { "from", ks.From }, { "at", ks.At }, { "length", ks.Length }, { "made", ks.Made } } },
+                { "listening", h != null }, { "heardFrom", h != null ? rec.HeardFrom : null }, { "heard", heardCount },
+                { "soundSeconds", h != null ? Math.Round(h.AudioSec, 1) : 0 }, { "cpuMsPerSecond", h != null && h.AudioSec > 0 ? Math.Round(h.WorkMs / h.AudioSec, 2) : 0 }, { "skipped", h != null ? h.Dropped : 0 },
+                { "recent", recentHits.Select(r => (object)new Dictionary<string, object> { { "time", Family.Time(r.Item1) }, { "kind", r.Item2 } }).ToList() } };
+        }
+        void OnHighlight(DateTime when, string kind)
+        {
+            if (hl == null || !rec.Running) return;
+            heardCount++; recentHits.Add(Tuple.Create(when, kind)); if (recentHits.Count > 20) recentHits.RemoveAt(0);
+            marks.Add(when); markKinds[when] = kind; marks.RemoveAll(m => m < DateTime.Now.AddHours(-12));
+            foreach (var k in markKinds.Keys.Where(m => m < DateTime.Now.AddHours(-12)).ToList()) markKinds.Remove(k);
+            if (S.HighlightAction == "save") QueueAutoSave(when, kind);
+            WriteStatus(true);
+        }
+        // a clip a few seconds after the highlight (so it ends after it); hits close together share one clip; at most 20 an hour
+        public const int MaxAutoPerHour = 20;
+        DateTime autoDue = DateTime.MinValue, autoFirst, lastAuto = DateTime.MinValue; string autoKind; DispatcherTimer autoTimer; bool toldCap;
+        readonly List<DateTime> autoSaves = new List<DateTime>();
+        void QueueAutoSave(DateTime when, string kind)
+        {
+            if (autoDue != DateTime.MinValue)
+            {
+                var cap = autoFirst.AddSeconds(Math.Max(2, Math.Min(12, S.Seconds - 3))); var d = when.AddSeconds(4);
+                if (d > autoDue) autoDue = d > cap ? cap : d; if (kind == "kill") autoKind = "kill"; return;
+            }
+            autoSaves.RemoveAll(t => t < DateTime.Now.AddHours(-1));
+            if (autoSaves.Count >= MaxAutoPerHour) { if (!toldCap) { toldCap = true; Status(MaxAutoPerHour + " automatic clips in the last hour - more highlights get a marker only for now."); } return; }
+            toldCap = false;
+            var gap = TimeSpan.FromSeconds(Math.Max(8, S.Seconds / 2));
+            autoFirst = when; autoKind = kind; autoDue = when.AddSeconds(4); if (lastAuto + gap > autoDue) autoDue = lastAuto + gap;
+            if (autoTimer == null) { autoTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) }; autoTimer.Tick += (s, e) => AutoTick(); }
+            autoTimer.Start();
+        }
+        void AutoTick()
+        {
+            if (autoDue == DateTime.MinValue || !rec.Running) { autoDue = DateTime.MinValue; autoTimer.Stop(); return; }
+            if (DateTime.Now < autoDue || saving) return;
+            var kind = autoKind; autoDue = DateTime.MinValue; autoTimer.Stop(); lastAuto = DateTime.Now; autoSaves.Add(DateTime.Now);
+            SaveClip(null, "auto", Highlights.KindTitle(kind));
+        }
+        // teach: the clip's game sound is read once, then the window picks the moment
+        void TeachKill(string clip)
+        {
+            var ff = S.Ffmpeg; if (ff == null) { Status("Set up FFmpeg first."); return; }
+            if (busy.Contains(clip)) return;
+            Status("Listening to " + Path.GetFileName(clip) + "...");
+            new Thread(() =>
+            {
+                var info = ClipOps.Inspect(ff, clip); var track = Highlights.GameTrack(info); string err;
+                var mono = Highlights.DecodeMono(ff, clip, track, out err);
+                var a = mono != null ? Highlights.Analyze(mono) : null;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (a == null) { Status(err ?? "Couldn't read the clip's sound."); return; }
+                    Status("");
+                    var w = new KillSoundWindow(clip, ff, a, Highlights.TrackName(info, track), S.HighlightSens) { Owner = this }; w.ShowDialog();
+                    if (w.Result == null) return;
+                    try { w.Result.Save(); } catch (Exception ex) { Status("Couldn't keep the kill sound: " + ex.Message); return; }
+                    ksStamp = DateTime.MinValue.AddTicks(1);   // read it again
+                    SetHighlights(Highlights.Kill(HlMode) ? HlMode : HlMode == "loud" ? "both" : "kill");
+                    Status("Kill sound kept - Auto highlights listen for it in your game sound and " + (S.HighlightAction == "save" ? "save a clip." : "add a marker."));
+                }));
+            }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }.Start();
+        }
+        ContentControl hlRow; Action FillHlRow;
+
         // ---- v1.7: title, thumbnail, GIF, phone, highlight reel
         void TitleClip(string clip)
         {
@@ -1353,7 +1529,7 @@ namespace HallowClips
             try { tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); } catch { tray.Icon = System.Drawing.SystemIcons.Application; }
             var menu = new WF.ContextMenuStrip();
             var open = new WF.ToolStripMenuItem("Open Hallow Clips"); open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold); open.Click += (s, e) => ShowFromTray(); menu.Items.Add(open);
-            var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => SaveClip(null))); menu.Items.Add(save);
+            var save = new WF.ToolStripMenuItem("Save a clip   (Ctrl+Alt+S)"); save.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => SaveClip(null, "menu", null))); menu.Items.Add(save);
             traySession = new WF.ToolStripMenuItem("Record session   (Ctrl+Alt+R)"); traySession.Click += (s, e) => Dispatcher.BeginInvoke(new Action(ToggleSession)); menu.Items.Add(traySession);
             trayAnyway = new WF.ToolStripMenuItem("Record anyway this session") { Visible = false, ToolTipText = "Discord Clips is recording this game - record with Hallow Clips too, until the game closes" };   // v1.11
             trayAnyway.Click += (s, e) => Dispatcher.BeginInvoke(new Action(() => { if (DiscordChoice) SetRecordAnyway(!recordAnyway); })); menu.Items.Add(trayAnyway);
@@ -1398,6 +1574,14 @@ namespace HallowClips
                         Snap.Save(ew, System.IO.Path.Combine(dir, look + ".png"), 600, 0);
                     }
                     try { Directory.Delete(tmpDir, true); } catch { }
+                    // v1.16: teach the kill sound (the clip's game sound, analysed like the real thing)
+                    var kt = Highlights.GameTrack(ci); string ke; var mono = Highlights.DecodeMono(S.Ffmpeg, clip.FullName, kt, out ke);
+                    if (mono != null)
+                    {
+                        var kw = new KillSoundWindow(clip.FullName, S.Ffmpeg, Highlights.Analyze(mono), Highlights.TrackName(ci, kt), "normal");
+                        Snap.Save(kw, System.IO.Path.Combine(dir, "killsound.png"), 600, 0);
+                        try { File.WriteAllText(System.IO.Path.Combine(dir, "killsound.txt"), "heard " + kw.Heard); } catch { }
+                    }
                 }
                 Snap.Save(new PromptWindow("Clip title", "Shown in the list and kept inside the MP4 (players show it too). Leave it empty to remove it.", "Big play", "Save title"), System.IO.Path.Combine(dir, "title.png"), 480, 0);
                 Snap.Save(new ThumbWindow(clip.FullName, S.Ffmpeg, 8), System.IO.Path.Combine(dir, "thumb.png"), 560, 0);
